@@ -1,0 +1,35 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<ClassDiagram MajorVersion="1" MinorVersion="1">
+  <Class Name="Camera">
+    <Position X="0.5" Y="0.5" Width="2.5" />
+    <Compartments>
+      <Compartment Name="Nested Types" Collapsed="false" />
+    </Compartments>
+    <NestedTypes>
+      <Enum Name="Camera::paramType" Collapsed="true">
+        <TypeIdentifier>
+          <NewMemberFileName>C:\Users\tabata\Documents\git\HighSpeedCamera\HighSpeedCamera\util\include\HSC\Camera.hpp</NewMemberFileName>
+        </TypeIdentifier>
+      </Enum>
+    </NestedTypes>
+    <TypeIdentifier>
+      <HashCode>AAAGAAAAAAAAAAQgwAAAAAAAAAAgAAAACZAgAAAFAAA=</HashCode>
+      <FileName>C:\Users\tabata\Documents\git\HighSpeedCamera\HighSpeedCamera\util\include\HSC\Camera.hpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="CameraUI" Collapsed="true">
+    <Position X="3" Y="0.5" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAEBACAAAAAAAAggAAAAAAAAAAAAAAACIAAAAAFAAA=</HashCode>
+      <FileName>C:\Users\tabata\Documents\git\HighSpeedCamera\HighSpeedCamera\util\include\HSC\CameraUI.hpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="idpExpress" Collapsed="true">
+    <Position X="3.25" Y="3" Width="1.5" />
+    <TypeIdentifier>
+      <HashCode>AAAEAJBAABAAAgAggBQARAgFAAAgAhAMCMAAAQMFBAA=</HashCode>
+      <FileName>C:\Users\tabata\Documents\git\HighSpeedCamera\HighSpeedCamera\util\include\HSC\idpExpressClass.hpp</FileName>
+    </TypeIdentifier>
+  </Class>
+  <Font Name="メイリオ" Size="9" />
+</ClassDiagram>
