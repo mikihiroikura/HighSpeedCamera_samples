@@ -44,8 +44,7 @@ void HeightCalibration(Capture *cap, ofstream &fout,RS232c &axis);
 void AxisInchUP(RS232c &axis, Capture &cap, int num);
 
 //グローバル変数
-vector<double> cogs;
-double moment, mass, cog;
+
 
 int main() {
 	//カメラパラメーター
@@ -151,13 +150,14 @@ void capthread(Capture *cap) {
 }
 
 
-void HeightCalibration(Capture *cap,ofstream &fout,RS232c &axis) {
+void HeightCalibration(Capture *cap, ofstream &fout, RS232c &axis) {
 	//カメラからフレーム取得
 	cap->cam.captureFrame(cap->in_img.data);
 	//光切断法による行ごとの輝度重心の計算
 	cv::threshold(cap->in_img, cap->out_img, 128.0, 255.0, cv::THRESH_BINARY);
 	cv::bitwise_and(cap->in_img, cap->out_img, cap->out_img);
-	
+	vector<double> cogs;
+	double moment, mass, cog;
 	for (size_t i = 0; i < cap->out_img.rows; i++) {
 		moment = 0.0;
 		mass = 0.0;
@@ -168,7 +168,12 @@ void HeightCalibration(Capture *cap,ofstream &fout,RS232c &axis) {
 		cog = moment / mass;
 		cogs.push_back(cog);
 	}
-	memcpy(&cap->CoGs, &cogs, sizeof(cap->CoGs));//Capture構造体のCoGsに保存
+	/*
+	for (int i = 0; i < cogs.size(); i++) {
+		cap->CoGs.push_back(cogs[i]);
+	}
+	*/
+	memcpy(&(cap->CoGs[0]), &cogs[0], sizeof(cap->CoGs));//Capture構造体のCoGsに保存
 	cogs.clear();
 	//出力ファイルに結果を保存する
 	fout << cap->height << ",";
@@ -176,6 +181,7 @@ void HeightCalibration(Capture *cap,ofstream &fout,RS232c &axis) {
 		fout << cap->CoGs[i] << ",";
 	}
 	fout << endl;
+	//cap->CoGs.clear();
 	//ここに単軸ロボットを制御する関数を書く//
 	AxisInchUP(axis, *cap, 50);
 }
