@@ -64,11 +64,11 @@ int main() {
 	printf(buf);
 	Sleep(3000);
 	//単軸ロボット原点回帰
-	/*axis.Send("@ORG.1\r\n");
+	axis.Send("@ORG.1\r\n");
 	axis.Read_CRLF(buf, 256);
 	printf(buf);
 	axis.Read_CRLF(buf, 256);
-	printf(buf);*/
+	printf(buf);
 	//Sleep(5000);
 
 	//キャプチャ用の構造体の宣言
@@ -154,7 +154,7 @@ void HeightCalibration(Capture *cap, ofstream &fout, RS232c &axis) {
 	//カメラからフレーム取得
 	cap->cam.captureFrame(cap->in_img.data);
 	//光切断法による行ごとの輝度重心の計算
-	cv::threshold(cap->in_img, cap->out_img, 128.0, 255.0, cv::THRESH_BINARY);
+	cv::threshold(cap->in_img, cap->out_img, 150.0, 255.0, cv::THRESH_BINARY);
 	cv::bitwise_and(cap->in_img, cap->out_img, cap->out_img);
 	vector<double> cogs;
 	double moment, mass, cog;
@@ -165,7 +165,9 @@ void HeightCalibration(Capture *cap, ofstream &fout, RS232c &axis) {
 			mass += cap->out_img.data[i*cap->out_img.cols + j];
 			moment += j * cap->out_img.data[i*cap->out_img.cols + j];
 		}
-		cog = moment / mass;
+		if (mass <= 0) { cog = 0; }
+		else{ cog = moment / mass; }
+		
 		cogs.push_back(cog);
 	}
 	/*
@@ -173,12 +175,14 @@ void HeightCalibration(Capture *cap, ofstream &fout, RS232c &axis) {
 		cap->CoGs.push_back(cogs[i]);
 	}
 	*/
-	memcpy(&(cap->CoGs[0]), &cogs[0], sizeof(cap->CoGs));//Capture構造体のCoGsに保存
+	//memcpy(&(cap->CoGs[0]), &cogs[0], sizeof(cap->CoGs));
+	copy(cogs.begin(), cogs.end(), cap->CoGs.begin());//Capture構造体のCoGsに保存
 	cogs.clear();
 	//出力ファイルに結果を保存する
 	fout << cap->height << ",";
 	for (size_t i = 0; i < cap->CoGs.size(); i++){
-		fout << cap->CoGs[i] << ",";
+		if(isnan(cap->CoGs[i])){ fout  << ","; }
+		else{fout << cap->CoGs[i] << ",";}
 	}
 	fout << endl;
 	//cap->CoGs.clear();
