@@ -4,6 +4,9 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+# ˆä‘q’Ç‹L
+*.jpg
+
 # User-specific files
 *.suo
 *.user

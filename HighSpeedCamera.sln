@@ -27,7 +27,11 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "MultiCameraSync", "sample\M
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HighSpeedCamera", "HighSpeedCamera\HighSpeedCamera.vcxproj", "{B675EE59-6D59-446D-AE38-84B73E82AE8C}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HightLightSection", "sample\HightLightSection\HightLightSection.vcxproj", "{17A0EA92-7552-4EC7-A955-2812FD1CFAE3}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "HeghtLightSection", "sample\HightLightSection\HightLightSection.vcxproj", "{17A0EA92-7552-4EC7-A955-2812FD1CFAE3}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "PhotoCapture", "sample\PhotoCapture\PhotoCapture.vcxproj", "{12081979-ECB8-489D-BCB8-AE4B62A8AE67}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TakeOneShotPicture", "sample\TakeOneShotPicture\TakeOneShotPicture.vcxproj", "{8212BD53-0CF1-445D-8037-77E8734A26E1}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -125,6 +129,22 @@ Global
 		{17A0EA92-7552-4EC7-A955-2812FD1CFAE3}.Release|x64.Build.0 = Release|x64
 		{17A0EA92-7552-4EC7-A955-2812FD1CFAE3}.Release|x86.ActiveCfg = Release|Win32
 		{17A0EA92-7552-4EC7-A955-2812FD1CFAE3}.Release|x86.Build.0 = Release|Win32
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Debug|x64.ActiveCfg = Debug|x64
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Debug|x64.Build.0 = Debug|x64
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Debug|x86.ActiveCfg = Debug|Win32
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Debug|x86.Build.0 = Debug|Win32
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Release|x64.ActiveCfg = Release|x64
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Release|x64.Build.0 = Release|x64
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Release|x86.ActiveCfg = Release|Win32
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67}.Release|x86.Build.0 = Release|Win32
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Debug|x64.ActiveCfg = Debug|x64
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Debug|x64.Build.0 = Debug|x64
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Debug|x86.ActiveCfg = Debug|Win32
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Debug|x86.Build.0 = Debug|Win32
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Release|x64.ActiveCfg = Release|x64
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Release|x64.Build.0 = Release|x64
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Release|x86.ActiveCfg = Release|Win32
+		{8212BD53-0CF1-445D-8037-77E8734A26E1}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -140,6 +160,8 @@ Global
 		{DB47F4F1-1C82-41F4-AE8B-9BE016DE4A74} = {F2F07877-339B-43EB-8939-1D7D4DF5A3A0}
 		{A3337598-9601-425E-BA0B-69C1FE7943CA} = {F2F07877-339B-43EB-8939-1D7D4DF5A3A0}
 		{17A0EA92-7552-4EC7-A955-2812FD1CFAE3} = {F2F07877-339B-43EB-8939-1D7D4DF5A3A0}
+		{12081979-ECB8-489D-BCB8-AE4B62A8AE67} = {F2F07877-339B-43EB-8939-1D7D4DF5A3A0}
+		{8212BD53-0CF1-445D-8037-77E8734A26E1} = {F2F07877-339B-43EB-8939-1D7D4DF5A3A0}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {2C4A315B-E7BF-480C-B489-760BF85A1A98}
