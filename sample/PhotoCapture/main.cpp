@@ -39,7 +39,7 @@ struct Capture
 
 //プロトタイプ宣言
 void AxisInchUP(RS232c &axis, Capture &cap, int num);
-void TakePicture(Capture *cap, bool flg);
+void TakePicture(Capture *cap, bool *flg);
 
 int main() {
 	//カメラパラメータ
@@ -56,7 +56,12 @@ int main() {
 	vector<cv::Mat> OFF_Pictures;
 	vector<cv::Mat> ON_Pictures;
 	vector<float> RobotHeights;
-	cv::Mat blank = (cv::Mat(height, width, CV_8UC1, cv::Scalar::all(255)));;
+	cv::Mat blank = (cv::Mat(height, width, CV_8UC1, cv::Scalar::all(255)));
+
+	//MBEDマイコンへのRS232接続
+	RS232c mbed;
+	char buf_mbed[256];
+	mbed.Connect("COM4", 9600, 8, NOPARITY);
 
 	//単軸ロボットのRS232接続
 	RS232c axis;
@@ -73,7 +78,14 @@ int main() {
 	printf(buf);
 	axis.Read_CRLF(buf, 256);
 	printf(buf);
-	
+	while (1) {
+		int H_org;
+		axis.Send("@?D0.1\r\n");
+		axis.Read_CRLF(buf, 256);
+		printf(buf);
+		sscanf(buf, "D0.1=%d\r\n", &H_org);
+		if (H_org < 100) { break; }
+	}
 
 	//キャプチャ用の構造体の宣言
 	Capture cap;
@@ -95,43 +107,30 @@ int main() {
 	//カメラ起動
 	cap.cam.start();
 
-	/*bool flag = true;
-	thread thr(TakePicture, &cap, flag);*/
+	bool flag = true;
+	thread thr(TakePicture, &cap, &flag);
 
 	bool on_flag = false;
 
 	while (1) {
-		cap.cam.captureFrame(cap.in_img.data);
 		cv::imshow("img", cap.in_img);
 		int key = cv::waitKey(1);
 		if (key == 'q')break;
 		for (size_t i = 0; i < num_pic; i++)
 		{
-			if (on_flag) {
-				ON_Pictures.push_back(cap.in_img.clone());
-			}
-			else {
-				OFF_Pictures.push_back(cap.in_img.clone());
-			}
+			mbed.Send("ON!");
+			Sleep(1000);
+			ON_Pictures.push_back(cap.in_img.clone());
+			mbed.Send("OFF");
+			Sleep(1000);
+			OFF_Pictures.push_back(cap.in_img.clone());
 		}
 		RobotHeights.push_back(cap.height);
 		AxisInchUP(axis, cap, 45);
-		if ((cap.height - cap.rob_ini_height) >= 700){
-			if (on_flag)break;
-			else{
-				//単軸ロボット原点回帰
-				axis.Send("@ORG.1\r\n");
-				axis.Read_CRLF(buf, 256);
-				printf(buf);
-				axis.Read_CRLF(buf, 256);
-				printf(buf);
-				on_flag = true;
-				cap.height = cap.rob_ini_height;
-			}
-		}
+		if ((cap.height - cap.rob_ini_height) >= 700) { break; }
 	}
-	//flag = false;
-	//if (thr.joinable())thr.join();
+	flag = false;
+	if (thr.joinable())thr.join();
 
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -140,19 +139,21 @@ int main() {
 	axis.Read_CRLF(buf, 256);
 	//axis.~RS232c();
 	printf(buf);
+	//MBED通信切断
+	//mbed.~RS232c();
 	//画像の保存
 	for (size_t i = 0; i < OFF_Pictures.size(); i++)
 	{
 		cv::imwrite(offdir + to_string(int(RobotHeights[i])) + "mm.jpg", OFF_Pictures[i]);
-		cv::imwrite(ondir + to_string(int(RobotHeights[i+OFF_Pictures.size()])) + "mm.jpg", ON_Pictures[i]);
+		cv::imwrite(ondir + to_string(int(RobotHeights[i])) + "mm.jpg", ON_Pictures[i]);
 	}
 	
 	return 0;
 }
 
 //thread内の関数
-void TakePicture(Capture *cap, bool flg) {
-	while (flg) {
+void TakePicture(Capture *cap, bool *flg) {
+	while (*flg) {
 		cap->cam.captureFrame(cap->in_img.data);
 	}
 }

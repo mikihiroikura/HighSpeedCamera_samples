@@ -37,11 +37,13 @@ struct Capture
 	vector<vector<double>> IdealPixs;
 	vector<double> lambdas;
 	vector<double> Heights;
+	vector<cv::Mat> Worlds;
 	bool max_h_flg = false;
 	vector<double> map_coefficient;
 	vector<double> stretch_mat;
 	vector<double> distortion;
 	vector<double> laser_plane;
+	cv::Mat Rot;
 };
 
 //プロトタイプ宣言
@@ -50,8 +52,9 @@ void CalcHeights(Capture *cap);
 
 int main() {
 	//各種パラメータ
-	double result;
-
+	double result,time;
+	LARGE_INTEGER freq,start,end;
+	if (!QueryPerformanceFrequency(&freq)) { return 0; }// 単位習得
 	//カメラパラメーター
 	int width = 640;
 	int height = 480;
@@ -79,6 +82,7 @@ int main() {
 	cap.cam.parameter_all_print();
 	//Calibration結果の格納
 	double a = 0, b = 0, c = 0, d = 0;
+	double R[9];
 	FILE* fp;
 	fp = fopen("cameraparams.csv", "r");
 	fscanf(fp, "%lf,%lf,%lf,%lf,", &a, &b, &c, &d);
@@ -94,27 +98,40 @@ int main() {
 	fscanf(fp, "%lf,%lf,", &a, &b);
 	cap.distortion.push_back(a);
 	cap.distortion.push_back(b);
+	fscanf(fp, "%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,%lf,", &R[0], &R[1], &R[2], &R[3], &R[4], &R[5], &R[6], &R[7], &R[8]);
+	cv::Mat Rs(cv::Size(3, 3),CV_64F, R);
+	Rs = Rs.inv();
+	cap.Rot = Rs.clone();
 	fscanf(fp, "%lf,%lf,%lf,", &a, &b, &c);
 	cap.laser_plane.push_back(a);
 	cap.laser_plane.push_back(b);
 	cap.laser_plane.push_back(c);
+	fclose(fp);
 
 	//カメラ起動
 	cap.cam.start();
 
+	//結果保存用ファイル開く
+	FILE* fr;
+	fr = fopen("result.csv", "w");
+
 	bool flag = true;
 	thread thr(TakePicture, &cap, &flag);
 
+	if (!QueryPerformanceCounter(&start)) { return 0; }
 	while (1)
 	{
 		cv::imshow("img", cap.in_img);
 		int key = cv::waitKey(1);
 		if (key == 'q')break;
 		CalcHeights(&cap);
-		if (cap.Heights.size()==0){printf("NONE\n");}
+		if (!QueryPerformanceCounter(&end)) { return 0; }
+		time = (double)(end.QuadPart - start.QuadPart) / freq.QuadPart;
+		if (cap.Worlds.size()==0){printf("Time: %lf s  Height: NONE\n",time);}
 		else{
-			result = cap.Heights[0];
-			printf("Height: %lf mm\n", result);
+			result = cap.Worlds[0].at<double>(0, 2);
+			printf("Time: %lf s  Height: %lf mm\n",time,result);
+			fprintf(fr,"%lf,%lf\n", time, result);
 		}
 	}
 	flag = false;
@@ -137,6 +154,7 @@ void CalcHeights(Capture *cap) {
 	cap->CoGs.clear();
 	cap->Heights.clear();
 	cap->IdealPixs.clear();
+	cap->Worlds.clear();
 	//輝度重心計算する行の範囲指定
 	int sta_row = 200;
 	int end_row = 280;
@@ -185,5 +203,13 @@ void CalcHeights(Capture *cap) {
 		cap->lambdas.push_back(lambda);
 		h = lambda * w;
 		cap->Heights.push_back(h);
+	}
+	//カメラ座標系中心のWorld座標に変換
+	cv::Mat campnt,wldpnt;
+	for (size_t i = 0; i < cap->Heights.size(); i++)
+	{
+		campnt = (cv::Mat_<double>(1, 3) << cap->lambdas[i]*cap->IdealPixs[i][0], cap->lambdas[i] * cap->IdealPixs[i][1], cap->Heights[i]);
+		wldpnt = campnt * cap->Rot;
+		cap->Worlds.push_back(wldpnt.clone());
 	}
 }
