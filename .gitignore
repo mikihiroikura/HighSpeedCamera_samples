@@ -6,6 +6,7 @@
 
 # ˆä‘q’Ç‹L
 *.jpg
+*.csv
 
 # User-specific files
 *.suo

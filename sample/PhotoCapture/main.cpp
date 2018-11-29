@@ -121,6 +121,7 @@ int main() {
 			mbed.Send("ON!");
 			Sleep(1000);
 			ON_Pictures.push_back(cap.in_img.clone());
+			Sleep(10000);
 			mbed.Send("OFF");
 			Sleep(1000);
 			OFF_Pictures.push_back(cap.in_img.clone());
