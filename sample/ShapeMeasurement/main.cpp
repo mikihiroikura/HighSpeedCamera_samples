@@ -64,7 +64,6 @@ struct Capture
 	//Log格納用配列
 	vector<double> Log_times;
 	vector<vector<int>> Row_num_Logs;
-	vector<vector<double>> Height_Logs;
 	vector<vector<cv::Mat>> Worlds_Logs;
 	vector<cv::Mat> Pictures;
 	vector<bool> Processed;
@@ -242,7 +241,7 @@ int main() {
 	int cpy = CopyFileA(filename, matdir, FALSE);
 	if (cpy) { printf("Copy success!   "); }
 	else { printf("Copy failed...   "); }
-	char matlabcmd[256] = "matlab -sd \"C:\\Users\\Mikihiro Ikura\\Desktop\" -r plot_sin -nosplash";
+	char matlabcmd[256] = "matlab -sd \"C:\\Users\\Mikihiro Ikura\\Documents\\GitHub\\ShowLSLogs\" -r ShowLSLogs -nosplash";
 	ret = system(matlabcmd);
 	if (ret == 0) { printf("MATLAB activate! \n"); }
 	else{printf("error! \n");}
@@ -275,8 +274,8 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 			*flg = false;
 			break;
 		}
-		if (cap->Height_Logs.size()>0){
-			if (cap->Height_Logs[cap->Height_Logs.size() - 1].size() == 0) { printf("Time: %lf s  Height: NONE\n", &logtime); }
+		if (cap->Worlds_Logs.size()>0){
+			if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size() == 0) { printf("Time: %lf s  Height: NONE\n", &logtime); }
 			else {
 				result = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1][0].at<double>(0, 2);
 				printf("Time: %lf s  Height: %lf mm\n", logtime, result);
@@ -369,7 +368,6 @@ void CalcHeights(Capture *cap) {
 		cap->Worlds.push_back(wldpnt.clone());
 		cap->Heights_world.push_back(hw);
 	}
-	cap->Height_Logs.push_back(cap->Heights_world);
 	cap->Worlds_Logs.push_back(cap->Worlds);
 	cap->Row_num_Logs.push_back(cap->row_num);
 	//処理カウンターと処理判別の更新
