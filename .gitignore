@@ -7,6 +7,9 @@
 # ˆä‘q’Ç‹L
 *.jpg
 *.csv
+*.avi
+*.wmv
+sample/ShapeMeasurement/results/
 
 # User-specific files
 *.suo
