@@ -31,7 +31,7 @@
 #pragma warning(disable:4996)
 
 //DEFINE群
-//#define SAVE_IMG_         //画像と動画をLogに残す
+#define SAVE_IMG_         //画像と動画をLogに残す
 #define MATLAB_GRAPHICS_  //MATLABを起動し，Logをプロットする
 
 using namespace std;
@@ -226,7 +226,7 @@ int main() {
 	if (!writer.isOpened()) { return -1; }
 	for (int i = 0; i < cap.Pictures.size(); i++) {
 		writer << cap.Pictures[i].clone();
-		sprintf(picname, "%s%d.jpg", picsubname, i);
+		sprintf(picname, "%s%d.jpg", picsubname, i);//jpg不可逆圧縮，png可逆圧縮
 		cv::imwrite(picname, cap.Pictures[i]);
 	}
 	printf("Imgs finish!\n");

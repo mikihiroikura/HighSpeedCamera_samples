@@ -1,3 +1,6 @@
+//Camera calibration—p‚ÉÊ^‚ğB‚éŠÖ”
+//RS232‚ÅMBED‚É‚Â‚È‚®
+
 #include <opencv2/opencv.hpp>
 #include <thread>
 #include <string>
