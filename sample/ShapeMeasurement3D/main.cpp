@@ -119,9 +119,7 @@ void TakePicture(Capture *cap, bool *flg);
 void CalcHeights(Capture *cap);
 void OutPutLogs(Capture *cap, bool *flg);
 int readShaderSource(GLuint shader, const char *file);
-int initmesh();
-void makemesh(Capture *cap, bool *flg);
-void endmesh();
+int writepointcloud(Capture *cap, bool *flg);
 
 int main(int argc, char *argv[]) {
 	LARGE_INTEGER freq,start,end;
@@ -223,9 +221,6 @@ int main(int argc, char *argv[]) {
 	strftime(filename, 256, "results/%y%m%d/%H%M%S/LS_result.csv", &now);
 	fr = fopen(filename, "w");
 	
-	//OpenGL‰Šú‰»
-	initmesh();
-
 	//toriaezu
 	vector<cv::Mat> temp;
 	temp.push_back(cv::Mat(1, 3, CV_64F, cv::Scalar::all(255)));
@@ -235,7 +230,7 @@ int main(int argc, char *argv[]) {
 	bool flag = true;
 	thread thr(TakePicture, &cap, &flag);
 	thread thr2(OutPutLogs, &cap, &flag);
-	thread thr3(makemesh, &cap,&flag);
+	thread thr3(writepointcloud, &cap,&flag);
 	Sleep(1);//thread‚Ì‚İ1msÀs‚µC‰æ‘œ‚ğŠi”[‚³‚¹‚é
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 	//ƒƒCƒ“ƒ‹[ƒv
@@ -251,9 +246,6 @@ int main(int argc, char *argv[]) {
 	if (thr.joinable())thr.join();
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
-
-	//OpenGL‚ÌI—¹
-	endmesh();
 
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -540,8 +532,8 @@ int readShaderSource(GLuint shader, const char *file)
 	return ret;
 }
 
-//OpenGL‘S‘Ì‚Ì‰Šú‰»
-int initmesh() {
+//OpenGL‚Å“_ŒQ•`‰æ‚·‚éŠÖ”
+int writepointcloud(Capture *cap, bool *flg) {
 	if (glfwInit() == GL_FALSE)
 	{
 		std::cerr << "Can't initilize GLFW" << std::endl;
@@ -635,13 +627,7 @@ int initmesh() {
 	mvp = Projection * View;
 
 	Matrix = glGetUniformLocation(gl2Program, "MVP");
-}
 
-
-//3ŸŒ³mesh‚Ì•`‰æ
-void makemesh(Capture *cap, bool *flg)
-{
-	
 	while (glfwWindowShouldClose(window) == GL_FALSE && *flg)
 	{
 		vector<cv::Mat> worlds = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1];
@@ -669,9 +655,6 @@ void makemesh(Capture *cap, bool *flg)
 
 		glfwSwapBuffers(window);
 	}
-}
-
-void endmesh() {
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
 
