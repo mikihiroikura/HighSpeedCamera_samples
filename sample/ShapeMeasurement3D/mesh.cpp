@@ -5,6 +5,10 @@ GLFWwindow  *window;
 GLuint vao;
 GLuint vbo;
 
+const int max_num = 150;
+GLfloat position[max_num][3];//numは定数でないといけないので注意
+glm::mat4 mvp;
+GLuint Matrix;
 
 /*
 ** シェーダーのソースプログラムをメモリに読み込む
@@ -107,73 +111,83 @@ int initmesh() {
 	glBindAttribLocation(gl2Program, 0, "position");
 	glBindFragDataLocation(gl2Program, 0, "gl_FragColor");
 	glLinkProgram(gl2Program);
+
+	//点群初期化
+	for (auto j = 0; j < max_num; ++j)
+	{
+		position[j][0] = 0.0f;
+		position[j][1] = 0.0f;
+		position[j][2] = 0.0f;
+	}
+
+	//頂点配列オブジェクト
+
+	glGenVertexArrays(1, &vao);
+	glBindVertexArray(vao);
+
+	//頂点バッファオブジェクト
+
+	glGenBuffers(1, &vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	glBufferData(GL_ARRAY_BUFFER, sizeof(position), nullptr, GL_DYNAMIC_DRAW);
+
+	//Vertexshaderの参照
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+	glEnableVertexAttribArray(0);
+
+	//頂点バッファオブジェクトの結合解除
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+
+	// カメラ行列
+	glm::mat4 View = glm::lookAt(
+		glm::vec3(4, 4, 4), // ワールド空間でカメラは(4,3,3)にあります。
+		glm::vec3(0, 0, 0), // 原点を見ています。
+		glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
+	);
+	glm::mat4 E = glm::mat4(1.0f);
+	glm::mat4 Projection = glm::perspective(glm::radians(60.0f), 4.0f / 3.0f, 0.1f, 100.0f);
+	mvp = Projection * View;
+
+	Matrix = glGetUniformLocation(gl2Program, "MVP");
 }
 
 
 //3次元meshの描画
-void makemesh(vector<cv::Mat> worlds)
+void makemesh(Capture *cap,bool *flg)
 {
-	const int num = 150;
-	GLfloat position[num][3];//numは定数でないといけないので注意
-	
-	if (glfwWindowShouldClose(window) == GL_FALSE)
+	vector<cv::Mat> worlds = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1];
+	while (glfwWindowShouldClose(window) == GL_FALSE && worlds.size()>0 && *flg)
 	{
-		//頂点配列オブジェクト
-		
-		glGenVertexArrays(1, &vao);
-		glBindVertexArray(vao);
-
-		//頂点バッファオブジェクト
-		
-		glGenBuffers(1, &vbo);
-		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(position), nullptr, GL_DYNAMIC_DRAW);
-
-		//Vertexshaderの参照
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-		glEnableVertexAttribArray(0);
-
-		//頂点バッファオブジェクトの結合解除
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindVertexArray(0);
-
-		// カメラ行列
-		glm::mat4 View = glm::lookAt(
-			glm::vec3(0, 0, 0), // ワールド空間でカメラは(4,3,3)にあります。
-			glm::vec3(-1, -1, -1), // 原点を見ています。
-			glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
-		);
-		glm::mat4 E = glm::mat4(1.0f);
-		GLuint Matrix = glGetUniformLocation(gl2Program, "MVP");
-
 		glClear(GL_COLOR_BUFFER_BIT);
-
+		
 		//Shaderプログラム使用開始
 		glUseProgram(gl2Program);
 
-		glUniformMatrix4fv(Matrix, 1, GL_FALSE, &View[0][0]);
+		glUniformMatrix4fv(Matrix, 1, GL_FALSE, &mvp[0][0]);
 
 		//描画する点群
-		for (auto j = 0; j < num; ++j)
+		for (auto j = 0; j < worlds.size(); ++j)
 		{
-			position[j][0] = 0.0f;
-			position[j][1] = 0.0f;
-			position[j][2] = 0.0f;
+			position[j][0] = worlds[j].at<double>(0, 0);
+			position[j][1] = worlds[j].at<double>(0, 1);
+			position[j][2] = worlds[j].at<double>(0, 2);
 		}
 
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(position), position);//更新
 		/*ここに描画*/
 		glBindVertexArray(vao);
-		glDrawArrays(GL_POINTS, 0, num);
+		glDrawArrays(GL_POINTS, 0, max_num);
 		glBindVertexArray(0);
 
 		glfwSwapBuffers(window);
 	}
-	
+}
+
+void endmesh() {
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
 
 	glfwTerminate();
-
 }

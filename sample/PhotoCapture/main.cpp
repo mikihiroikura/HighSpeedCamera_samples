@@ -65,6 +65,7 @@ int main() {
 	RS232c mbed;
 	char buf_mbed[256];
 	mbed.Connect("COM4", 9600, 8, NOPARITY);
+	printf("MBED Connected");
 
 	//単軸ロボットのRS232接続
 	RS232c axis;

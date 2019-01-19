@@ -126,10 +126,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="mesh.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mesh.h" />
     <ClInclude Include="RS232c.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
