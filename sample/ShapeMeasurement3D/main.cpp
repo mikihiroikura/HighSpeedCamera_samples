@@ -91,6 +91,9 @@ double moment, mass, cog,rowmass,colmass;
 int rowcnt;
 cv::Mat lhand, rhand,sol;
 
+//toriaezu
+double toria = 0;
+
 //光切断法範囲指定
 int LS_sta_row = 150;
 int LS_end_row = 300;
@@ -112,6 +115,8 @@ GLuint vbo;
 const int max_num = 150;
 GLfloat position[max_num][3];//numは定数でないといけないので注意
 glm::mat4 mvp;
+glm::mat4 View;
+glm::mat4 Projection;
 GLuint Matrix;
 
 //プロトタイプ宣言
@@ -241,6 +246,7 @@ int main(int argc, char *argv[]) {
 			if (!QueryPerformanceCounter(&end)) { return 0; }
 			logtime = (double)(end.QuadPart - start.QuadPart) / freq.QuadPart;
 			cap.Log_times.push_back(logtime);
+			
 		}
 	}
 	if (thr.joinable())thr.join();
@@ -483,6 +489,16 @@ void CalcHeights(Capture *cap) {
 	}
 	cap->Worlds_Logs.push_back(cap->Worlds);
 	cap->Row_num_Logs.push_back(cap->row_num);
+	//とりあえず
+
+	vector<cv::Mat> temp;
+	temp.push_back(cv::Mat(1, 3, CV_64F, cv::Scalar::all(toria)));
+	toria += 0.1;
+	if (toria>4)
+	{
+		toria = 0;
+	}
+	cap->Worlds_Logs.push_back(temp);
 	//処理カウンターと処理判別の更新
 	cap->pic_cnt++;	
 }
@@ -617,16 +633,17 @@ int writepointcloud(Capture *cap, bool *flg) {
 	glBindVertexArray(0);
 
 	// カメラ行列
-	glm::mat4 View = glm::lookAt(
-		glm::vec3(4, 4, 400), // ワールド空間でカメラは(4,3,3)にあります。
+	View = glm::lookAt(
+		glm::vec3(0, -4, 2), // ワールド空間でカメラは(4,3,3)にあります。
 		glm::vec3(0, 0, 0), // 原点を見ています。
 		glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
 	);
 	glm::mat4 E = glm::mat4(1.0f);
-	glm::mat4 Projection = glm::perspective(glm::radians(60.0f), 4.0f / 3.0f, 0.1f, 100.0f);
+	Projection = glm::perspective(glm::radians(60.0f), 4.0f / 3.0f, 0.1f, 100.0f);
 	mvp = Projection * View;
 
 	Matrix = glGetUniformLocation(gl2Program, "MVP");
+	double lookh = 1;
 
 	while (glfwWindowShouldClose(window) == GL_FALSE && *flg)
 	{
@@ -636,7 +653,19 @@ int writepointcloud(Capture *cap, bool *flg) {
 		//Shaderプログラム使用開始
 		glUseProgram(gl2Program);
 
+		//視点行列の更新
+		View = glm::lookAt(
+			glm::vec3(0, -4, lookh), // ワールド空間でカメラは(4,3,3)にあります。
+			glm::vec3(0, 0, lookh-2), // 原点を見ています。
+			glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
+		);
+		mvp = Projection * View;
 		glUniformMatrix4fv(Matrix, 1, GL_FALSE, &mvp[0][0]);
+		lookh += 0.2;
+		if (lookh>10)
+		{
+			lookh = 1;
+		}
 
 		//描画する点群
 		for (auto j = 0; j < worlds.size(); ++j)
