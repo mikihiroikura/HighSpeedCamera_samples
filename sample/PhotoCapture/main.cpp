@@ -42,6 +42,7 @@ struct Capture
 
 //プロトタイプ宣言
 void AxisInchUP(RS232c &axis, Capture &cap, int num);
+void AxisInchDOWN(RS232c &axis, Capture &cap, int num);
 void TakePicture(Capture *cap, bool *flg);
 
 int main() {
@@ -80,6 +81,7 @@ int main() {
 	axis.Send("@ORG.1\r\n");
 	axis.Read_CRLF(buf, 256);
 	printf(buf);
+	Sleep(5000);
 	axis.Read_CRLF(buf, 256);
 	printf(buf);
 	while (1) {
@@ -115,7 +117,9 @@ int main() {
 	thread thr(TakePicture, &cap, &flag);
 
 	bool on_flag = false;
-
+	int cnt = 0;//InchUpした回数
+	int max_pic_pair = 10;//画像群の獲得個数
+	int pic_pair = 0;
 	while (1) {
 		cv::imshow("img", cap.in_img);
 		int key = cv::waitKey(1);
@@ -131,8 +135,21 @@ int main() {
 			OFF_Pictures.push_back(cap.in_img.clone());
 		}
 		RobotHeights.push_back(cap.height);
-		AxisInchUP(axis, cap, 45);
-		if ((cap.height - cap.rob_ini_height) >= 700) { break; }
+		if (cnt==0){
+			AxisInchUP(axis, cap, 300);
+			cnt++;
+		}
+		else{
+			AxisInchUP(axis, cap, 45);
+			cnt++;
+		}
+		if (cnt > 9) {
+			AxisInchDOWN(axis, cap, 45 * 9);
+			cnt = 1;
+			pic_pair++;
+			if (pic_pair == max_pic_pair) {break;}
+		}
+		//if ((cap.height - cap.rob_ini_height) >= 700) { break; }
 	}
 	flag = false;
 	if (thr.joinable())thr.join();
@@ -169,6 +186,33 @@ void AxisInchUP(RS232c &axis, Capture &cap, int num) {
 	int rob_height;//単位は0.01mmが1
 	for (int i = 0; i < num; i++) {
 		axis.Send("@INCH+.1\r\n");
+		axis.Read_CRLF(buf, 256);
+		printf(buf);
+		axis.Read_CRLF(buf, 256);
+		printf(buf);
+		if (buf[0] == 'N'&&buf[1] == 'G') {
+			cap.max_h_flg = true;
+			break;
+		}
+		/*axis.Send("@?D0.1\r\n");
+		axis.Read_CRLF(buf, 256);
+		sscanf(buf, "D0.1=%d\r\n", &rob_height);*/
+
+	}
+	axis.Send("@?D0.1\r\n");
+	axis.Read_CRLF(buf, 256);
+	printf(buf);
+	sscanf(buf, "D0.1=%d\r\n", &rob_height);
+	cap.height = cap.rob_ini_height + (float)rob_height * 0.01;
+
+}
+
+//単軸ロボットのINCH-モード
+void AxisInchDOWN(RS232c &axis, Capture &cap, int num) {
+	char buf[256];
+	int rob_height;//単位は0.01mmが1
+	for (int i = 0; i < num; i++) {
+		axis.Send("@INCH-.1\r\n");
 		axis.Read_CRLF(buf, 256);
 		printf(buf);
 		axis.Read_CRLF(buf, 256);
