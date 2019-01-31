@@ -11,6 +11,8 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/core.hpp>
 #include <Windows.h>
+#define _USE_MATH_DEFINES
+#include <math.h>
 #define GLFW_NO_GLU
 
 #pragma comment(lib, "glew32.lib")
@@ -39,6 +41,7 @@
 #pragma comment(lib, "BaslerLib" CAMERA_EXT)
 
 #pragma warning(disable:4996)
+
 
 //DEFINE群
 //#define SAVE_IMG_         //画像と動画をLogに残す
@@ -70,10 +73,6 @@ struct Capture
 	vector<double> map_coefficient;
 	vector<double> stretch_mat;
 	vector<double> distortion;
-	cv::Vec3d barPlane;
-	cv::Vec3d lightPoint;
-	cv::Vec3d barLineCam;
-	cv::Vec3d barLineP;
 	double laser_plane[3];
 	vector<cv::Mat> Rots;
 	vector<double> Rot_height;
@@ -97,10 +96,6 @@ cv::Mat lhand, rhand,sol;
 double timeout = 60.0;
 cv::Mat campnt, wldpnt;
 double hw;
-cv::PCA pca;
-
-//toriaezu
-double toria = 0;
 
 //光切断法範囲指定
 int LS_sta_row = 150;
@@ -119,20 +114,22 @@ GLFWwindow  *window;
 //頂点オブジェクト
 GLuint vao;
 GLuint vbo;
-
+//OpenGL内での変数
 const int max_num = 150;
 GLfloat position[max_num][3];//numは定数でないといけないので注意
 glm::mat4 mvp;
 glm::mat4 View;
 glm::mat4 Projection;
 GLuint Matrix;
-glm::vec3 campos = glm::vec3(-130, 0, 800);
-
-float h_angle = 3.14f;
-float v_angle = 0.0f;
-float fov = 60.0f;
+glm::vec3 campos;
+//View行列再計算時のパラメータ
+float h_angle = 0;
+float v_angle =  M_PI /6.0f;
+float fov = 45.0f;
 float speed = 3.0f;
 float mousespeed = 0.005f;
+float H_robot = 470;
+const float H_camera = 600;
 
 //プロトタイプ宣言
 void TakePicture(Capture *cap, bool *flg);
@@ -265,7 +262,7 @@ int main(int argc, char *argv[]) {
 	}
 	if (thr.joinable())thr.join();
 	if (thr2.joinable())thr2.join();
-	//if (thr3.joinable())thr3.join();
+	if (thr3.joinable())thr3.join();
 
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -633,18 +630,6 @@ int writepointcloud(Capture *cap, bool *flg) {
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 
-	// カメラ行列
-	View = glm::lookAt(
-		glm::vec3(0, 4, 5), // ワールド空間でカメラは(4,3,3)にあります。
-		glm::vec3(0, 0, 0), // 原点を見ています。
-		glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
-	);
-	glm::mat4 E = glm::mat4(1.0f);
-	Projection = glm::perspective(glm::radians(fov), 4.0f / 3.0f, 0.1f, 1000.0f);
-	mvp = Projection * View;
-
-	//campos = glm::vec3(0, 4, 5);
-
 	Matrix = glGetUniformLocation(gl2Program, "MVP");
 
 	while (glfwWindowShouldClose(window) == GL_FALSE && *flg)
@@ -694,6 +679,9 @@ void computeMatrices() {
 	//glfwSetCursorPos(window, 1024/2, 768/2);//マウス位置リセット
 	printf("xp: %f, yp: %f \n",xp,yp);
 
+	//カメラ位置ベクトル更新
+	campos = glm::vec3(0, -400, H_robot-H_camera);
+
 	//方向ベクトル更新
 	/*h_angle += mousespeed * float(1024 / 2 - xp);
 	v_angle += mousespeed * float(768 / 2 - yp);*/
@@ -740,11 +728,5 @@ void computeMatrices() {
 		up
 	);
 	
-	//View = glm::lookAt(
-	//	glm::vec3(0, 4, 5), // ワールド空間でカメラは(4,3,3)にあります。
-	//	glm::vec3(0, 0, 0)+direction, // 原点を見ています。
-	//	glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
-	//);
-
 	lastTime = currentTime;//時間更新
 }
