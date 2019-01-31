@@ -126,7 +126,7 @@ glm::mat4 mvp;
 glm::mat4 View;
 glm::mat4 Projection;
 GLuint Matrix;
-glm::vec3 campos = glm::vec3(-200, -210, 460);
+glm::vec3 campos = glm::vec3(-130, 0, 800);
 
 float h_angle = 3.14f;
 float v_angle = 0.0f;
@@ -248,7 +248,7 @@ int main(int argc, char *argv[]) {
 	char picname[256] = "C:/Users/Mikihiro Ikura/Documents/GitHub/FisheyeCalibration/Photos/Laser_on/picture294mm.jpg";
 	thread thr(TakePicture, &cap, &flag);
 	thread thr2(OutPutLogs, &cap, &flag);
-	//thread thr3(writepointcloud, &cap,&flag);
+	thread thr3(writepointcloud, &cap,&flag);
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 	//メインループ
@@ -640,7 +640,7 @@ int writepointcloud(Capture *cap, bool *flg) {
 		glm::vec3(0, 1, 0)  // 頭が上方向(0,-1,0にセットすると上下逆転します。)
 	);
 	glm::mat4 E = glm::mat4(1.0f);
-	Projection = glm::perspective(glm::radians(fov), 4.0f / 3.0f, 0.1f, 100.0f);
+	Projection = glm::perspective(glm::radians(fov), 4.0f / 3.0f, 0.1f, 1000.0f);
 	mvp = Projection * View;
 
 	//campos = glm::vec3(0, 4, 5);
@@ -691,16 +691,16 @@ void computeMatrices() {
 	//Mouse位置から見ている方向を変更
 	double xp, yp;
 	glfwGetCursorPos(window, &xp, &yp);
-	glfwSetCursorPos(window, 1024/2, 768/2);//マウス位置リセット
+	//glfwSetCursorPos(window, 1024/2, 768/2);//マウス位置リセット
 	printf("xp: %f, yp: %f \n",xp,yp);
 
 	//方向ベクトル更新
-	h_angle += mousespeed * float(1024 / 2 - xp);
-	v_angle += mousespeed * float(768 / 2 - yp);
+	/*h_angle += mousespeed * float(1024 / 2 - xp);
+	v_angle += mousespeed * float(768 / 2 - yp);*/
 	glm::vec3 direction(
 		cos(v_angle)*sin(h_angle),
 		sin(v_angle),
-		cos(v_angle)*sin(h_angle)
+		cos(v_angle)*cos(h_angle)
 	);
 	//右ベクトル更新
 	glm::vec3 right = glm::vec3(
@@ -731,12 +731,12 @@ void computeMatrices() {
 	}
 
 	//射影行列の更新
-	Projection = glm::perspective(glm::radians(fov), 4.0f / 3.0f, 0.1f, 100.0f);
+	Projection = glm::perspective(glm::radians(fov), 4.0f / 3.0f, 0.1f, 1000.0f);
 
 	//カメラ行列の更新
 	View = glm::lookAt(
 		campos,
-		campos + direction,
+		campos+direction,
 		up
 	);
 	
