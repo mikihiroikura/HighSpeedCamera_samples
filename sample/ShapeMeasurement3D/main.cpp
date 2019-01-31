@@ -77,6 +77,11 @@ struct Capture
 	double laser_plane[3];
 	vector<cv::Mat> Rots;
 	vector<double> Rot_height;
+	double barX[100];
+	double planeA[100];
+	double planeB[100];
+	double planeC[100];
+	int barXint;
 	//Log格納用配列
 	vector<double> Log_times;
 	vector<vector<int>> Row_num_Logs;
@@ -131,7 +136,7 @@ float mousespeed = 0.005f;
 
 //プロトタイプ宣言
 void TakePicture(Capture *cap, bool *flg);
-void CalcHeights(Capture *cap);
+int CalcHeights(Capture *cap);
 void OutPutLogs(Capture *cap, bool *flg);
 int readShaderSource(GLuint shader, const char *file);
 int writepointcloud(Capture *cap, bool *flg);
@@ -171,7 +176,7 @@ int main(int argc, char *argv[]) {
 	double a = 0, b = 0, c = 0, d = 0,h = 0;
 	double R[9];
 	FILE* fp;
-	fp = fopen("cameramultiplanebarparams.csv", "r");
+	fp = fopen("cameraplanebarparamsinterpolate.csv", "r");
 	fscanf(fp, "%lf,%lf,%lf,%lf,", &a, &b, &c, &d);
 	cap.map_coefficient.push_back(a);
 	cap.map_coefficient.push_back(b);
@@ -189,12 +194,20 @@ int main(int argc, char *argv[]) {
 	cv::Mat Rs(cv::Size(3, 3), CV_64F, R);
 	//Rs = Rs.inv();//MATLABからの出力時に転置をとった形になるのでここはいらなくなる
 	cap.Rots.push_back(Rs.clone());
-	//棒上の平面の式パラメータz=ax+by+c
-	fscanf(fp, "%lf,%lf,%lf,", &a, &b, &c);
-	cap.barPlane = cv::Vec3d(a, b, c);
-	//輝点の座標
-	fscanf(fp, "%lf,%lf,%lf,", &a, &b, &c);
-	cap.lightPoint = cv::Vec3d(a, b, c);
+	//棒上の輝点のX座標群
+	for (size_t i = 0; i < 100; i++){
+		fscanf(fp, "%lf,", &cap.barX[i]);
+	}
+	//平面の式ax+by+cz=1のパラメータ
+	for (size_t i = 0; i < 100; i++) {
+		fscanf(fp, "%lf,", &cap.planeA[i]);
+	}
+	for (size_t i = 0; i < 100; i++) {
+		fscanf(fp, "%lf,", &cap.planeB[i]);
+	}
+	for (size_t i = 0; i < 100; i++) {
+		fscanf(fp, "%lf,", &cap.planeC[i]);
+	}
 	fclose(fp);
 
 	//detの計算をする
@@ -358,10 +371,10 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 			break;
 		}
 		if (cap->Worlds_Logs.size()>0){
-			if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size() == 0) { printf("Time: ,%lf, s  Height: ,NONE,\n", logtime); }
+			if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size() == 0) { printf("Time: ,%lf, s Bar: ,%lf, mm  Height: ,NONE,\n", logtime,cap->barX[cap->barXint]); }
 			else {
 				result = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1][0].at<double>(0, 2);
-				printf("Time: ,%lf, s  Height: ,%lf, mm\n", logtime, result);
+				printf("Time: ,%lf, s Bar: ,%lf, mm  Height: ,%lf, mm\n", logtime, cap->barX[cap->barXint],result);
 			}
 		}
 		
@@ -369,7 +382,7 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 }
 
 //main loop内での高度計算
-void CalcHeights(Capture *cap) {
+int CalcHeights(Capture *cap) {
 	//前回使用した配列のClear
 	cap->CoGs.clear();
 	cap->Heights_cam.clear();
@@ -417,21 +430,32 @@ void CalcHeights(Capture *cap) {
 	vector<double> idpixs;
 	double u, v, w;//次のfor内でも使う
 	double ud, vd;
+	double totalcog = 0;
+	double cogcnt = 0;
+	double barcog;
+	//棒に映る輝点中心のX座標@pixel座標から，補完した点群を用いて平面パラメータを取得
 	for (int i = 0; i < cap->barPoint.size(); i++)
 	{
 		if (cap->barPoint[i] == 0) { continue; }
-		ud = cap->barPoint[i] - cap->distortion[0];
-		vd = (double)(i + PL_sta_row) - cap->distortion[1];
-		u = det * (ud - cap->stretch_mat[1] * vd);
-		v = det * (-cap->stretch_mat[2] * ud + cap->stretch_mat[0] * vd);
-		idpixs.push_back(u);
-		idpixs.push_back(v);
-		cap->barIdealPixs.push_back(idpixs);
-		idpixs.clear();
+		totalcog += cap->barPoint[i];
+		cogcnt++;
 	}
-	//閾値で切った画像が真っ暗の時(barIdealPixs.size()=0)の時は何もしない
-	if (cap->barIdealPixs.size() > 0)
-	{
+	barcog = totalcog / cogcnt;
+	//もしレーザー平面が補間領内なら実行
+	if (cap->barX[0]<barcog && barcog<cap->barX[99]) {
+		cap->barXint = 0;
+		for (int i = 0; i < 100; i++)
+		{
+			if (cap->barX[i]<barcog&&cap->barX[i + 1]>barcog) {
+				cap->barXint = i;
+				break;
+			}
+		}
+		cap->laser_plane[0] = (cap->planeA[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeA[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
+		cap->laser_plane[1] = (cap->planeB[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeB[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
+		cap->laser_plane[2] = (cap->planeC[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeC[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
+
+		//地面にあたるレーザーの輝度重心の計算
 		for (int i = 0; i < cap->CoGs.size(); i++)
 		{
 			if (cap->CoGs[i] == 0) { continue; }
@@ -445,48 +469,8 @@ void CalcHeights(Capture *cap) {
 			idpixs.clear();
 		}
 
-		//棒上の理想ピクセル座標群⇒直線+輝点⇒レーザー平面
-		double phi, lambda, h;
-		cv::Mat src(cap->barIdealPixs.size(), 3, CV_32FC1);
-		//理想ピクセル座標群+棒上平面の式⇒直線@Camera座標に最適化
-		for (size_t i = 0; i < cap->barIdealPixs.size(); i++)
-		{
-			u = cap->barIdealPixs[i][0];
-			v = cap->barIdealPixs[i][1];
-			phi = hypot(u, v);
-			w = cap->map_coefficient[0] + cap->map_coefficient[1] * phi*phi
-				+ cap->map_coefficient[2] * phi*phi*phi + cap->map_coefficient[3] * phi*phi*phi*phi;
-			lambda = -cap->barPlane[2] / (cap->barPlane[0] * u + cap->barPlane[1] * v - w);
-			((float*)src.data)[i*src.cols + 0] = lambda * u;
-			((float*)src.data)[i*src.cols + 1] = lambda * v;
-			((float*)src.data)[i*src.cols + 2] = lambda * w;
-			//printf("%f,%f,%f\n", lambda*u, lambda*v, lambda*w);
-		}
-		/*((float*)src.data)[cap->barIdealPixs.size()*src.cols + 0] = cap->lightPoint[0];
-		((float*)src.data)[cap->barIdealPixs.size()*src.cols + 1] = cap->lightPoint[1];
-		((float*)src.data)[cap->barIdealPixs.size()*src.cols + 2] = cap->lightPoint[2];*/
-		//cv::PCA pca(src, cv::Mat(), CV_PCA_DATA_AS_ROW, 3);
-		pca = pca(src, cv::Mat(), CV_PCA_DATA_AS_ROW, 3);
-		cap->barLineCam = cv::Vec3d(pca.eigenvectors.at<float>(0, 0), pca.eigenvectors.at<float>(0, 1), pca.eigenvectors.at<float>(0, 2));
-		cap->barLineP = cv::Vec3d(pca.mean.at<float>(0, 0), pca.mean.at<float>(0, 1), pca.mean.at<float>(0, 2));
-		//輝点と棒上Laser直線を通る平面z=ax+by+cの計算
-		cv::Vec3d ref = cap->barLineP - cap->lightPoint;
-		cv::Vec3d norm = ref.cross(cap->barLineCam);
-		norm = -norm / norm[2];
-		double c = -norm.dot(cap->lightPoint);
-		cap->laser_plane[0] = norm[0];
-		cap->laser_plane[1] = norm[1];
-		cap->laser_plane[2] = c;
-		/*cap->barLineCam = cv::Vec3d(pca.eigenvectors.at<float>(0, 0), pca.eigenvectors.at<float>(0, 1), pca.eigenvectors.at<float>(0, 2));
-		cap->barLineP = cv::Vec3d(pca.eigenvectors.at<float>(1, 0), pca.eigenvectors.at<float>(1, 1), pca.eigenvectors.at<float>(1, 2));
-		cv::Vec3d norm = cap->barLineP.cross(cap->barLineCam);
-		norm = -norm / norm[2];
-		double c = -norm.dot(cap->lightPoint);
-		cap->laser_plane[0] = norm[0];
-		cap->laser_plane[1] = norm[1];
-		cap->laser_plane[2] = c;*/
-
 		//理想ピクセル座標⇒直線の式とレーザー平面の求解
+		double phi, lambda, h;
 		for (size_t i = 0; i < cap->IdealPixs.size(); i++)//0番目はReference棒への直線
 		{
 			u = cap->IdealPixs[i][0];
@@ -494,13 +478,13 @@ void CalcHeights(Capture *cap) {
 			phi = hypot(u, v);
 			w = cap->map_coefficient[0] + cap->map_coefficient[1] * pow(phi, 2)
 				+ cap->map_coefficient[2] * pow(phi, 3) + cap->map_coefficient[3] * pow(phi, 4);
-			lambda = -cap->laser_plane[2] / (cap->laser_plane[0] * u + cap->laser_plane[1] * v - w);
+			lambda = 1 / (cap->laser_plane[0] * u + cap->laser_plane[1] * v + cap->laser_plane[2] * w);
 			cap->lambdas.push_back(lambda);
 			h = lambda * w;
 			cap->Heights_cam.push_back(h);
 		}
+
 		//カメラ座標系中心のWorld座標に変換
-		
 		for (size_t i = 0; i < cap->IdealPixs.size(); i++)//0番目は棒に映る点
 		{
 			campnt = (cv::Mat_<double>(1, 3) << cap->lambdas[i] * cap->IdealPixs[i][0], cap->lambdas[i] * cap->IdealPixs[i][1], cap->Heights_cam[i]);
@@ -509,23 +493,15 @@ void CalcHeights(Capture *cap) {
 			cap->Worlds.push_back(wldpnt.clone());
 			cap->Heights_world.push_back(hw);
 		}
-		
-
-		////とりあえず
-		//vector<cv::Mat> temp;
-		//temp.push_back(cv::Mat(1, 3, CV_64F, cv::Scalar::all(toria)));
-		//toria += 0.1;
-		//if (toria>4)
-		//{
-		//	toria = 0;
-		//}
-		//cap->Worlds_Logs.push_back(temp);
 	}
+
 	cap->Worlds_Logs.push_back(cap->Worlds);
 	cap->Row_num_Logs.push_back(cap->row_num);
 
 	//処理カウンターと処理判別の更新
 	cap->pic_cnt++;
+
+	return 0;
 }
 
 /*
