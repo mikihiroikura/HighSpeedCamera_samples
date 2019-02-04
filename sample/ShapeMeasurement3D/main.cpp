@@ -80,7 +80,7 @@ struct Capture
 	double planeA[100];
 	double planeB[100];
 	double planeC[100];
-	int barXint;
+	int barXint = 0;
 	//Log格納用配列
 	vector<double> Log_times;
 	vector<vector<int>> Row_num_Logs;
@@ -116,7 +116,9 @@ GLuint vao;
 GLuint vbo;
 //OpenGL内での変数
 const int max_num = 150;
-GLfloat position[max_num][3];//numは定数でないといけないので注意
+int logsize = 150;//750fpsの場合で何フレーム分出力するか
+vector<float> pointlogs(max_num * 3 * logsize, 0);
+vector<float> pos(max_num * 3, 0);
 glm::mat4 mvp;
 glm::mat4 View;
 glm::mat4 Projection;
@@ -131,6 +133,20 @@ float mousespeed = 0.005f;
 float H_robot = 470;
 const float H_camera = 600;
 
+
+//Scan場所決定評価関数のパラメータ
+double E[600];//評価関数値(-300<x<300の範囲)
+double t[600] = { 0.0f };
+double x_legm = -150;
+double x_legp = 150;
+double t_alpha = 0.02;
+vector<vector<double>> E_Logs;
+vector<int> argEmaxLogs;
+vector<double> EvalTimeLogs;
+
+//時刻変数
+LARGE_INTEGER freq, start,logend;
+
 //プロトタイプ宣言
 void TakePicture(Capture *cap, bool *flg);
 int CalcHeights(Capture *cap);
@@ -139,9 +155,11 @@ int readShaderSource(GLuint shader, const char *file);
 int writepointcloud(Capture *cap, bool *flg);
 void GetPicture(Capture *cap, bool *flg, char * filename);
 void computeMatrices();
+void ScapPosEvaluation(Capture *cap, bool *flg);
+double NormDist(double x, double a, double sig, double mean);
 
 int main(int argc, char *argv[]) {
-	LARGE_INTEGER freq,start,end;
+	LARGE_INTEGER end;
 	if (!QueryPerformanceFrequency(&freq)) { return 0; }// 単位習得
 	//カメラパラメーター
 	int width = 640;
@@ -217,6 +235,7 @@ int main(int argc, char *argv[]) {
 
 	//結果保存用ファイルを日時付きで作成し開く
 	FILE* fr;
+	FILE* fr2;
 	time_t timer;
 	struct tm now; 
 	struct tm *local;
@@ -232,8 +251,11 @@ int main(int argc, char *argv[]) {
 	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures", &now);
 	_mkdir(dir2);
 	char filename[256];
+	char PosEval[256];
 	strftime(filename, 256, "results/%y%m%d/%H%M%S/LS_result.csv", &now);
+	strftime(PosEval, 256, "results/%y%m%d/%H%M%S/PosEval_result.csv", &now);
 	fr = fopen(filename, "w");
+	fr2 = fopen(PosEval, "w");
 	
 	//toriaezu
 	vector<cv::Mat> temp;
@@ -246,6 +268,7 @@ int main(int argc, char *argv[]) {
 	thread thr(TakePicture, &cap, &flag);
 	thread thr2(OutPutLogs, &cap, &flag);
 	thread thr3(writepointcloud, &cap,&flag);
+	thread thr4(ScapPosEvaluation, &cap, &flag);
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 	//メインループ
@@ -263,6 +286,7 @@ int main(int argc, char *argv[]) {
 	if (thr.joinable())thr.join();
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
+	if (thr4.joinable())thr4.join();
 
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -389,6 +413,7 @@ int CalcHeights(Capture *cap) {
 	cap->row_num.clear();
 	cap->barPoint.clear();
 	cap->barIdealPixs.clear();
+	cap->lambdas.clear();
 	//画像配列群から次の処理カウンターの番号の画像をin_imgに格納する
 	cap->in_img = cap->Pictures[cap->pic_cnt];	
 	//輝度重心の計算
@@ -603,14 +628,6 @@ int writepointcloud(Capture *cap, bool *flg) {
 	glBindFragDataLocation(gl2Program, 0, "gl_FragColor");
 	glLinkProgram(gl2Program);
 
-	//点群初期化
-	for (auto j = 0; j < max_num; ++j)
-	{
-		position[j][0] = 0.0f;
-		position[j][1] = 0.0f;
-		position[j][2] = 0.0f;
-	}
-
 	//頂点配列オブジェクト
 
 	glGenVertexArrays(1, &vao);
@@ -620,7 +637,7 @@ int writepointcloud(Capture *cap, bool *flg) {
 
 	glGenBuffers(1, &vbo);
 	glBindBuffer(GL_ARRAY_BUFFER, vbo);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(position), nullptr, GL_DYNAMIC_DRAW);
+	glBufferData(GL_ARRAY_BUFFER, pointlogs.size()*4, nullptr, GL_DYNAMIC_DRAW);
 
 	//Vertexshaderの参照
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
@@ -631,7 +648,8 @@ int writepointcloud(Capture *cap, bool *flg) {
 	glBindVertexArray(0);
 
 	Matrix = glGetUniformLocation(gl2Program, "MVP");
-
+	
+	
 	while (glfwWindowShouldClose(window) == GL_FALSE && *flg)
 	{
 		vector<cv::Mat> worlds = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1];
@@ -645,19 +663,23 @@ int writepointcloud(Capture *cap, bool *flg) {
 		mvp = Projection * View;
 		glUniformMatrix4fv(Matrix, 1, GL_FALSE, &mvp[0][0]);
 
+		
 		//描画する点群
 		for (auto j = 0; j < worlds.size(); ++j)
 		{
-			position[j][0] = worlds[j].at<double>(0, 0);
-			position[j][1] = worlds[j].at<double>(0, 1);
-			position[j][2] = worlds[j].at<double>(0, 2);
+			pos[j * 3 + 0] = worlds[j].at<double>(0, 0);
+			pos[j * 3 + 1] = worlds[j].at<double>(0, 1);
+			pos[j * 3 + 2] = worlds[j].at<double>(0, 2);
 		}
 
+		pointlogs.insert(pointlogs.end(), pos.begin(), pos.end());
+		pointlogs.erase(pointlogs.begin(),pointlogs.begin()+450);
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-		glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(position), position);//更新
+		//glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(position), &position[0][0]);//更新
 																		/*ここに描画*/
+		glBufferSubData(GL_ARRAY_BUFFER, 0, pointlogs.size()*4,&pointlogs[0]);
 		glBindVertexArray(vao);
-		glDrawArrays(GL_POINTS, 0, max_num);
+		glDrawArrays(GL_POINTS, 0, max_num*logsize);
 		glBindVertexArray(0);
 
 		glfwSwapBuffers(window);
@@ -677,7 +699,7 @@ void computeMatrices() {
 	double xp, yp;
 	glfwGetCursorPos(window, &xp, &yp);
 	//glfwSetCursorPos(window, 1024/2, 768/2);//マウス位置リセット
-	printf("xp: %f, yp: %f \n",xp,yp);
+	//printf("xp: %f, yp: %f \n",xp,yp);
 
 	//カメラ位置ベクトル更新
 	campos = glm::vec3(0, -400, H_robot-H_camera);
@@ -730,3 +752,49 @@ void computeMatrices() {
 	
 	lastTime = currentTime;//時間更新
 }
+
+
+double NormDist(double x, double a, double sig, double mean) {
+	return a / sqrt((2 * M_PI*sig*sig))*exp(-(x - mean)*(x - mean) / 2 / sig / sig);
+}
+
+//Scanする場所を評価関数で求める
+void ScapPosEvaluation(Capture *cap, bool *flg) {
+	unsigned int evalcnt = 0;
+	while (*flg)
+	{
+		if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size()>0&&cap->pic_cnt>evalcnt)
+		{
+			double xnow = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1][0].at<double>(0, 0);
+			double Emax = 0;
+			int argEmax;
+			double temp = NormDist(-150, 0.2, 50, -150);
+			vector<double> Es;
+			//printf("%lf", temp);
+			QueryPerformanceCounter(&logend);
+			double evaltime = (double)(logend.QuadPart - start.QuadPart) / freq.QuadPart;
+			for (int i = -300; i < 300; i++)
+			{
+				if ((int)xnow == i) {
+					E[i + 300] = 0;
+					t[i + 300] = evaltime;
+				}
+				else {
+					E[i + 300] = NormDist((double)i, 0.2, 50, -150) + NormDist((double)i, 0.2, 50, 150) +
+						NormDist((double)i, 0.5, 10, xnow) + t_alpha * (evaltime - t[i + 300]);
+				}
+				if (Emax<E[i + 300])//argmaxEが更新されたら
+				{
+					Emax = E[i + 300];
+					argEmax = i;
+				}
+				Es.push_back(E[i + 300]);
+			}
+			EvalTimeLogs.push_back(evaltime);
+			E_Logs.push_back(Es);
+			argEmaxLogs.push_back(argEmax);
+			evalcnt++;
+		}
+	}
+}
+

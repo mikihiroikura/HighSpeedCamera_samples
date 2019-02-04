@@ -44,6 +44,7 @@ struct Capture
 void AxisInchUP(RS232c &axis, Capture &cap, int num);
 void AxisInchDOWN(RS232c &axis, Capture &cap, int num);
 void TakePicture(Capture *cap, bool *flg);
+void AxisToPoint(RS232c &axis, Capture &cap, int pointnum);
 
 int main() {
 	//カメラパラメータ
@@ -54,8 +55,8 @@ int main() {
 
 	//各種パラメータ
 	int counter = 0;
-	string offdir = "Photos/Laser_off/picure";
-	string ondir = "Photos/Laser_on/picture";
+	string offdir = "Photos/Laser_off";
+	string ondir = "Photos/Laser_on";
 	int num_pic = 1;
 	vector<cv::Mat> OFF_Pictures;
 	vector<cv::Mat> ON_Pictures;
@@ -118,34 +119,48 @@ int main() {
 
 	bool on_flag = false;
 	int cnt = 0;//InchUpした回数
+	int maxup =10;
 	int max_pic_pair = 10;//画像群の獲得個数
 	int pic_pair = 0;
+	axis.Read_CRLF(buf, 256);
+	printf(buf);
 	while (1) {
 		cv::imshow("img", cap.in_img);
 		int key = cv::waitKey(1);
 		if (key == 'q')break;
-		for (size_t i = 0; i < num_pic; i++)
-		{
-			mbed.Send("ON!");
-			Sleep(1000);
-			ON_Pictures.push_back(cap.in_img.clone());
-			Sleep(10000);
-			mbed.Send("OFF");
-			Sleep(1000);
-			OFF_Pictures.push_back(cap.in_img.clone());
+		if (cnt != 0) {
+			for (size_t i = 0; i < num_pic; i++)
+			{
+				mbed.Send("ON!");
+				Sleep(1000);
+				ON_Pictures.push_back(cap.in_img.clone());
+				Sleep(3000);
+				mbed.Send("OFF");
+				Sleep(1000);
+				OFF_Pictures.push_back(cap.in_img.clone());
+			}
+			RobotHeights.push_back(cap.height);
 		}
-		RobotHeights.push_back(cap.height);
 		if (cnt==0){
-			AxisInchUP(axis, cap, 300);
-			cnt++;
+			AxisToPoint(axis, cap, 15);
 		}
-		else{
-			AxisInchUP(axis, cap, 45);
-			cnt++;
+		else if(cnt>0&&cnt<maxup){
+			int point = cnt +15;
+			AxisToPoint(axis, cap, point);
 		}
-		if (cnt > 9) {
-			AxisInchDOWN(axis, cap, 45 * 9);
-			cnt = 1;
+		cnt++;
+		if (cnt > maxup) {
+			//画像の保存
+			for (size_t i = 0; i < OFF_Pictures.size(); i++)
+			{
+				cv::imwrite(offdir + to_string(pic_pair+1)+"/picture" + to_string(int(RobotHeights[i])) + "mm.jpg", OFF_Pictures[i]);
+				cv::imwrite(ondir  +to_string(pic_pair + 1) + "/picture" + to_string(int(RobotHeights[i])) + "mm.jpg", ON_Pictures[i]);
+			}
+			OFF_Pictures.clear();
+			ON_Pictures.clear();
+			RobotHeights.clear();
+			//AxisInchDOWN(axis, cap, 45 * 9);
+			cnt = 0;
 			pic_pair++;
 			if (pic_pair == max_pic_pair) {break;}
 		}
@@ -164,11 +179,11 @@ int main() {
 	//MBED通信切断
 	//mbed.~RS232c();
 	//画像の保存
-	for (size_t i = 0; i < OFF_Pictures.size(); i++)
+	/*for (size_t i = 0; i < OFF_Pictures.size(); i++)
 	{
 		cv::imwrite(offdir + to_string(int(RobotHeights[i])) + "mm.jpg", OFF_Pictures[i]);
 		cv::imwrite(ondir + to_string(int(RobotHeights[i])) + "mm.jpg", ON_Pictures[i]);
-	}
+	}*/
 	
 	return 0;
 }
@@ -232,4 +247,29 @@ void AxisInchDOWN(RS232c &axis, Capture &cap, int num) {
 	sscanf(buf, "D0.1=%d\r\n", &rob_height);
 	cap.height = cap.rob_ini_height + (float)rob_height * 0.01;
 
+}
+
+//単軸ロボットのポイント指定移動
+void AxisToPoint(RS232c &axis, Capture &cap,int pointnum) {
+	char command[256] = { '\0' };
+	char buf[256];
+	int rob_height;
+	axis.Read_CRLF(buf, 256);
+	printf(buf);//RUN
+	sprintf(command, "@START%d.1\r\n", pointnum);
+	axis.Send(command);
+	axis.Read_CRLF(buf, 256);
+	printf(buf);//RUN
+	Sleep(5000);
+	axis.Read_CRLF(buf, 256);
+	printf(buf);//END
+	Sleep(1000);
+	axis.Send("@?D0.1\r\n");
+	axis.Read_CRLF(buf, 256);
+	printf(buf);//D0.1=~~
+	/*axis.Send("@?D0.1\r\n");
+	axis.Read_CRLF(buf, 256);
+	printf(buf);*/
+	sscanf(buf, "D0.1=%d\r\n", &rob_height);
+	cap.height = cap.rob_ini_height + (float)rob_height * 0.01;
 }
