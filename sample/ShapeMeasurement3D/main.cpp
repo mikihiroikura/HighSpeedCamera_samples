@@ -168,8 +168,10 @@ float max_angle = 80;
 float max_laser_num = 50;
 float part_angle = 20;
 float part_laser_num = 30;
-char buf_mirror[8];
+char buf_mirror[7];
 vector<float> mirV_log;
+vector<string> sendlog;
+string temp_log;
 unsigned int control_cnt = 0;
 
 
@@ -188,6 +190,7 @@ void ScapPosEvaluation(Capture *cap, bool *flg);
 double NormDist(double x, double a, double sig, double mean);
 void ShapeChangeDetection(Capture *cap,bool *flg);
 void MirrorControl(Capture *cap, bool *flg);
+void SendMirror(Capture *cap, bool *flg);
 
 int main(int argc, char *argv[]) {
 	LARGE_INTEGER end;
@@ -296,7 +299,7 @@ int main(int argc, char *argv[]) {
 	cap.Worlds_Logs.push_back(temp);
 
 	//ミラー制御のためのMBEDマイコンへのRS232接続
-	mirror.Connect("COM4", 115200, 8, NOPARITY);
+	mirror.Connect("COM4", 38400, 8, NOPARITY);
 
 	//スレッド作成
 	bool flag = true;
@@ -305,7 +308,7 @@ int main(int argc, char *argv[]) {
 	thread thr2(OutPutLogs, &cap, &flag);//現在の画像，計算高度をデバック出力するThread
 	thread thr3(writepointcloud, &cap,&flag);//OpenGLで計算した点群を出力するThread
 	thread thr4(ShapeChangeDetection, &cap, &flag);
-	thread thr5(MirrorControl, &cap, &flag);
+	thread thr5(SendMirror, &cap, &flag);
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 	//メインループ
@@ -320,6 +323,7 @@ int main(int argc, char *argv[]) {
 		}
 		
 	}
+	mirror.Send("q");
 	if (thr.joinable())thr.join();
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
@@ -433,6 +437,9 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 		if (key == 'q') {
 			*flg = false;
 			break;
+		}
+		else if (key == 'm') {//ミラーのモード制御
+			mirror.Send("m");
 		}
 		if (logtime > timeout) { 
 			*flg = false;
@@ -953,8 +960,24 @@ void MirrorControl(Capture *cap,bool *flg) {
 			control_cnt++;
 			mirV_log.push_back(mirrorV);
 			//mirrorVをMBEDに送信
-			snprintf(buf_mirror, 8, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
+			snprintf(buf_mirror, 7, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
+			temp_log = buf_mirror;
+			sendlog.push_back(temp_log);
 			mirror.Send(buf_mirror);//電圧値文字列を送信
 		}
 	}
+}
+
+void SendMirror(Capture *cap, bool *flg) {
+	while (*flg)
+	{
+		//画像が1枚更新されたときにSwitch文1回行う
+		if (cap->Processed[cap->pic_cnt] && cap->pic_cnt>control_cnt)
+		{
+			control_cnt++;
+			//信号をMBEDに送信
+			mirror.Send("o");//電圧値文字列を送信
+		}
+	}
+	mirror.Send("q");
 }
