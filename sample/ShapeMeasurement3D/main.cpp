@@ -44,7 +44,7 @@
 
 
 //DEFINE群
-//#define SAVE_IMG_         //画像と動画をLogに残す
+#define SAVE_IMG_         //画像と動画をLogに残す
 //#define MATLAB_GRAPHICS_  //MATLABを起動し，Logをプロットする
 
 using namespace std;
@@ -76,11 +76,11 @@ struct Capture
 	double laser_plane[3];
 	vector<cv::Mat> Rots;
 	vector<double> Rot_height;
-	double barX[100];
-	double planeA[100];
-	double planeB[100];
-	double planeC[100];
-	int barXint = 0;
+	double barX[100];//ax+by+cz=1のReference barに映った輝点のX座標軍
+	double planeA[100];//ax+by+cz=1のaの値群
+	double planeB[100];//ax+by+cz=1のbの値群
+	double planeC[100];//ax+by+cz=1のcの値群
+	int barXint = 0;//Reference barに映った輝点のX座標群に該当する配列番号
 	//Log格納用配列
 	vector<double> Log_times;
 	vector<vector<int>> Row_num_Logs;
@@ -93,7 +93,7 @@ double result, logtime ,det;
 double moment, mass, cog,rowmass,colmass;
 int rowcnt;
 cv::Mat lhand, rhand,sol;
-double timeout = 60.0;
+double timeout = 30.0;
 cv::Mat campnt, wldpnt;
 double hw;
 
@@ -123,7 +123,8 @@ glm::mat4 mvp;
 glm::mat4 View;
 glm::mat4 Projection;
 GLuint Matrix;
-glm::vec3 campos;
+glm::vec3 campos;//カメラ位置座標ベクトル
+vector<cv::Mat> gl_img_Logs;//OpenGL出力図の保存Vector
 //View行列再計算時のパラメータ
 float h_angle = 0;
 float v_angle =  M_PI /6.0f;
@@ -144,6 +145,34 @@ vector<vector<double>> E_Logs;
 vector<int> argEmaxLogs;
 vector<double> EvalTimeLogs;
 
+//形状変化検出用パラメータ
+vector<cv::Mat> Diffs;
+cv::Mat oldimg,newimg;
+cv::Mat diff;
+cv::Mat thrmask;
+cv::Mat	thrdiff;
+cv::Mat laserthr, laserthr2;//レーザー部分を抜くMask
+cv::Moments M;//形状変化した点群のモーメント
+cv::Rect roi(150, 150, 340, 210);
+int detect_cnt_thr = 100;//形状変化検知のThreshold
+
+//ミラー制御用変数
+RS232c mirror;
+int mode = 0;
+float mirrorV = 1.65;
+float dV = 0;
+float Vtarget = 0;
+float delv;
+float mirrordir = 1;
+float max_angle = 80;
+float max_laser_num = 50;
+float part_angle = 20;
+float part_laser_num = 30;
+char buf_mirror[8];
+vector<float> mirV_log;
+unsigned int control_cnt = 0;
+
+
 //時刻変数
 LARGE_INTEGER freq, start,logend;
 
@@ -157,6 +186,8 @@ void GetPicture(Capture *cap, bool *flg, char * filename);
 void computeMatrices();
 void ScapPosEvaluation(Capture *cap, bool *flg);
 double NormDist(double x, double a, double sig, double mean);
+void ShapeChangeDetection(Capture *cap,bool *flg);
+void MirrorControl(Capture *cap, bool *flg);
 
 int main(int argc, char *argv[]) {
 	LARGE_INTEGER end;
@@ -250,6 +281,8 @@ int main(int argc, char *argv[]) {
 	char dir2[256];
 	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures", &now);
 	_mkdir(dir2);
+	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures_diff", &now);
+	_mkdir(dir2);
 	char filename[256];
 	char PosEval[256];
 	strftime(filename, 256, "results/%y%m%d/%H%M%S/LS_result.csv", &now);
@@ -257,18 +290,22 @@ int main(int argc, char *argv[]) {
 	fr = fopen(filename, "w");
 	fr2 = fopen(PosEval, "w");
 	
-	//toriaezu
+	//とりあえずWorlds_logにMatを格納させる
 	vector<cv::Mat> temp;
 	temp.push_back(cv::Mat(1, 3, CV_64F, cv::Scalar::all(255)));
 	cap.Worlds_Logs.push_back(temp);
 
+	//ミラー制御のためのMBEDマイコンへのRS232接続
+	mirror.Connect("COM4", 115200, 8, NOPARITY);
+
 	//スレッド作成
 	bool flag = true;
 	char picname[256] = "C:/Users/Mikihiro Ikura/Documents/GitHub/FisheyeCalibration/Photos/Laser_on/picture294mm.jpg";
-	thread thr(TakePicture, &cap, &flag);
-	thread thr2(OutPutLogs, &cap, &flag);
-	thread thr3(writepointcloud, &cap,&flag);
-	thread thr4(ScapPosEvaluation, &cap, &flag);
+	thread thr(TakePicture, &cap, &flag);//構造体に画像を保存するThread
+	thread thr2(OutPutLogs, &cap, &flag);//現在の画像，計算高度をデバック出力するThread
+	thread thr3(writepointcloud, &cap,&flag);//OpenGLで計算した点群を出力するThread
+	thread thr4(ShapeChangeDetection, &cap, &flag);
+	thread thr5(MirrorControl, &cap, &flag);
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 	//メインループ
@@ -287,6 +324,7 @@ int main(int argc, char *argv[]) {
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
 	if (thr4.joinable())thr4.join();
+	if (thr5.joinable())thr5.join();
 
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -315,23 +353,31 @@ int main(int argc, char *argv[]) {
 	printf("Logs finish!\n");
 	fclose(fr);
 
-	//画像を動画保存
+	//画像を保存
 	#ifdef SAVE_IMG_
 	printf("saving Imgs...   ");
 	char videoname[256];
-	char picname[256];
+	char picturename[256];
 	char picsubname[128];
+	char diffname[256];
+	char diffsubname[128];
 	strftime(videoname, 256, "results/%y%m%d/%H%M%S/video.avi", &now);
 	strftime(picsubname, 128, "results/%y%m%d/%H%M%S/Pictures/frame", &now);
-	cv::VideoWriter writer(videoname, cv::VideoWriter::fourcc('X', 'V', 'I', 'D'), 750.0, cv::Size(640, 480), false);//モノクロなのでFalse指定
-	if (!writer.isOpened()) { return -1; }
+	strftime(diffsubname, 128, "results/%y%m%d/%H%M%S/Pictures_diff/frame", &now);
+	//cv::VideoWriter writer(videoname, cv::VideoWriter::fourcc('X', 'V', 'I', 'D'), 750.0, cv::Size(640, 480), false);//モノクロなのでFalse指定
+	//if (!writer.isOpened()) { return -1; }
 	for (int i = 0; i < cap.Pictures.size(); i++) {
-		writer << cap.Pictures[i].clone();
-		sprintf(picname, "%s%d.jpg", picsubname, i);//jpg不可逆圧縮，png可逆圧縮
-		cv::imwrite(picname, cap.Pictures[i]);
+		//writer << cap.Pictures[i].clone();
+		sprintf(picturename, "%s%d.png", picsubname, i);//jpg不可逆圧縮，png可逆圧縮
+		cv::imwrite(picturename, cap.Pictures[i]);
+	}
+	for (int i = 0; i < Diffs.size(); i++)
+	{
+		sprintf(diffname, "%s%d.png", diffsubname, i);//jpg不可逆圧縮，png可逆圧縮
+		cv::imwrite(diffname, Diffs[i]);
 	}
 	printf("Imgs finish!\n");
-	writer.release();
+	//writer.release();
 	#endif // SAVE_IMG_
 
 	//MATLABでLogの出力をする
@@ -382,6 +428,7 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 	while (1)
 	{
 		cv::imshow("img", cap->in_img);
+		cv::imshow("Diffs", thrmask);
 		int key = cv::waitKey(1);
 		if (key == 'q') {
 			*flg = false;
@@ -477,7 +524,7 @@ int CalcHeights(Capture *cap) {
 		cap->laser_plane[1] = (cap->planeB[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeB[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
 		cap->laser_plane[2] = (cap->planeC[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeC[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
 
-		//地面にあたるレーザーの輝度重心の計算
+		//地面にあたるレーザーの理想ピクセル座標の計算
 		for (int i = 0; i < cap->CoGs.size(); i++)
 		{
 			if (cap->CoGs[i] == 0) { continue; }
@@ -648,6 +695,9 @@ int writepointcloud(Capture *cap, bool *flg) {
 	glBindVertexArray(0);
 
 	Matrix = glGetUniformLocation(gl2Program, "MVP");
+
+	//保存用Matファイル
+	cv::Mat gl_img(768, 1024, CV_8UC3);
 	
 	
 	while (glfwWindowShouldClose(window) == GL_FALSE && *flg)
@@ -681,8 +731,18 @@ int writepointcloud(Capture *cap, bool *flg) {
 		glBindVertexArray(vao);
 		glDrawArrays(GL_POINTS, 0, max_num*logsize);
 		glBindVertexArray(0);
+		
 
+		//フロントバッファとバックバッファの入れ変え
 		glfwSwapBuffers(window);
+
+		//OpenGLのバッファをcv::mat配列に保存
+		glReadBuffer(GL_BACK);
+		glReadPixels(0, 0, 1024, 768, GL_BGR, GL_UNSIGNED_BYTE, gl_img.data);
+		cv::flip(gl_img, gl_img, 0);
+		cv::imshow("gl_img",gl_img);
+		cv::waitKey(1);
+		gl_img_Logs.push_back(gl_img.clone());//更新時間は光切断法と一致していない
 	}
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
@@ -753,7 +813,7 @@ void computeMatrices() {
 	lastTime = currentTime;//時間更新
 }
 
-
+//正規分布値を計算する関数
 double NormDist(double x, double a, double sig, double mean) {
 	return a / sqrt((2 * M_PI*sig*sig))*exp(-(x - mean)*(x - mean) / 2 / sig / sig);
 }
@@ -798,3 +858,103 @@ void ScapPosEvaluation(Capture *cap, bool *flg) {
 	}
 }
 
+//連続difframe枚分のフレーム画像の差分画像から形状変化を検出
+void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
+	int difframe = 30;
+	while (*flg)
+	{
+		if (cap->pic_cnt>difframe) {//difframe分だけ処理カウンタが進んだら
+			oldimg = cap->Pictures[cap->pic_cnt - difframe];
+			newimg = cap->Pictures[cap->pic_cnt];
+			//差分画像計算
+			diff = abs(newimg - oldimg);
+			//形状変化部分を差分画像から検出
+			cv::threshold(oldimg, laserthr, 180, 255, cv::THRESH_BINARY_INV);
+			cv::threshold(newimg, laserthr2, 180, 255, cv::THRESH_BINARY_INV);//レーザーが光っているところはThresholdかける
+			cv::bitwise_and(laserthr, laserthr2, laserthr);//二つのレーザー画像のThreshold画像をマージ
+			int meanval = (int)mean(diff)[0];//差分画像の平均画素値計算
+			cv::threshold(diff, thrmask, 15.0+meanval, 255.0, cv::THRESH_BINARY);//15+画素値平均値の閾値超えを255に
+			cv::bitwise_and(thrmask, laserthr, thrmask);//レーザーが映ったところは消去
+			Diffs.push_back(diff.clone());
+			//形状変化検出画像の部分から0次モーメント(Pixel数)計算
+			M = cv::moments(thrmask(roi));
+			if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
+			{
+				//検出点群の重心のX方向@pix座標系計算
+				Vtarget = mirrorV;//現在の電圧値をVtargetに更新
+				mode = 1;//Modeを1に変更
+				
+			}
+		}
+	}
+}
+
+//連続2枚分のフレーム画像の差分画像から形状変化を検出
+void ShapeChangeDetection(Capture *cap, bool *flg) {
+	int difframe = 2;
+	while (*flg)
+	{
+		if (cap->pic_cnt>difframe&&cap->Processed[cap->pic_cnt]) {//difframe分だけ処理カウンタが進んだら
+			oldimg = cap->Pictures[cap->pic_cnt - difframe];
+			newimg = cap->Pictures[cap->pic_cnt-1];
+			//差分画像計算
+			diff = abs(newimg - oldimg);
+			int meanval = (int)mean(diff)[0];
+			cv::threshold(diff, thrmask, 15.0 + meanval, 255.0, cv::THRESH_BINARY);
+			//cv::bitwise_and(diff, thrdiff, thrmask);
+			Diffs.push_back(diff.clone());
+			int cntzero = cv::countNonZero(diff);
+		}
+	}
+}
+
+
+//ミラーの画角制御
+void MirrorControl(Capture *cap,bool *flg) {
+	while (*flg)
+	{
+		//画像が1枚更新されたときにSwitch文1回行う
+		if (cap->Processed[cap->pic_cnt]&&cap->pic_cnt>control_cnt)
+		{
+			switch (mode)
+			{
+			case 0://通常通りScan
+				Vtarget = 1.65;
+				delv = 3.3 / max_laser_num;
+				if (mirrorV>3.3 - delv * 0.5) { mirrordir = -1; }
+				else if (mirrorV<0 + delv * 0.5) { mirrordir = 1; }
+				dV += (float)mirrordir*delv;
+				mirrorV = dV + Vtarget;
+				break;
+
+			case 1://形状変化検知後に移動
+				dV = 0;//dVをリセット
+				mirrorV = Vtarget;//Vtargetは別Threadで更新される
+				break;
+
+			case 2://形状変化地帯の計測
+				//Vtargetは形状変化検知後の移動で更新されたものを使う
+				delv = 3.3 / max_angle * part_angle / part_laser_num;
+				if (mirrorV>3.3 - delv * 0.5 || mirrorV>Vtarget + delv * (part_laser_num / 2.0 - 0.5)) { mirrordir = -1; }
+				else if (mirrorV<0 + delv * 0.5 || mirrorV<Vtarget - delv * (part_laser_num / 2.0 - 0.5)) { mirrordir = 1; }
+				dV += (float)mirrordir*delv;
+				mirrorV = dV + Vtarget;
+				break;
+
+			default://通常Scanにする
+				Vtarget = 1.65;
+				delv = 3.3 / max_laser_num;
+				if (mirrorV>3.3 - delv * 0.5) { mirrordir = -1; }
+				else if (mirrorV<0 + delv * 0.5) { mirrordir = 1; }
+				dV += (float)mirrordir*delv;
+				mirrorV = dV + Vtarget;
+				break;
+			}
+			control_cnt++;
+			mirV_log.push_back(mirrorV);
+			//mirrorVをMBEDに送信
+			snprintf(buf_mirror, 8, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
+			mirror.Send(buf_mirror);//電圧値文字列を送信
+		}
+	}
+}

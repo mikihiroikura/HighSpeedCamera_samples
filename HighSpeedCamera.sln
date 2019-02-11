@@ -37,6 +37,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ShapeMeasurement", "sample\
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ShapeMeasurement3D", "sample\ShapeMeasurement3D\ShapeMeasurement3D.vcxproj", "{101C988B-BD9D-4503-A689-7833EE5E9165}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "DebugImages", "sample\DebugImages\DebugImages.vcxproj", "{1974882E-6705-4821-8CB3-18CF7DB89B19}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -165,6 +167,14 @@ Global
 		{101C988B-BD9D-4503-A689-7833EE5E9165}.Release|x64.Build.0 = Release|x64
 		{101C988B-BD9D-4503-A689-7833EE5E9165}.Release|x86.ActiveCfg = Release|Win32
 		{101C988B-BD9D-4503-A689-7833EE5E9165}.Release|x86.Build.0 = Release|Win32
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Debug|x64.ActiveCfg = Debug|x64
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Debug|x64.Build.0 = Debug|x64
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Debug|x86.ActiveCfg = Debug|Win32
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Debug|x86.Build.0 = Debug|Win32
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Release|x64.ActiveCfg = Release|x64
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Release|x64.Build.0 = Release|x64
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Release|x86.ActiveCfg = Release|Win32
+		{1974882E-6705-4821-8CB3-18CF7DB89B19}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

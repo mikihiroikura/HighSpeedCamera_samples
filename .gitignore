@@ -10,6 +10,7 @@
 *.avi
 *.wmv
 sample/ShapeMeasurement/results/
+*.png
 
 # User-specific files
 *.suo
