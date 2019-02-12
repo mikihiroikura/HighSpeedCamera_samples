@@ -83,6 +83,7 @@ struct Capture
 	int barXint = 0;//Reference barに映った輝点のX座標群に該当する配列番号
 	//Log格納用配列
 	vector<double> Log_times;
+	vector<vector<double>> CoGs_Logs;
 	vector<vector<int>> Row_num_Logs;
 	vector<vector<cv::Mat>> Worlds_Logs;
 	vector<cv::Mat> Pictures;
@@ -155,6 +156,10 @@ cv::Mat laserthr, laserthr2;//レーザー部分を抜くMask
 cv::Moments M;//形状変化した点群のモーメント
 cv::Rect roi(150, 150, 340, 210);
 int detect_cnt_thr = 100;//形状変化検知のThreshold
+double ltarget;//検出後の形状変化中心部のPixel座標
+double lthreshold =10.0;//レーザー位置ずれの閾値
+double Plaser = -3.3 / 600 * 0.8;//レーザーの正方向と画像Pixel座標X軸方向が逆なので負，3.3Vが600Pixel 分で重みで0.8かけた
+bool shapechange = 0;//形状変化検出フラグ(0：未検出，1：検出)
 
 //ミラー制御用変数
 RS232c mirror;
@@ -173,6 +178,9 @@ vector<float> mirV_log;
 vector<string> sendlog;
 string temp_log;
 unsigned int control_cnt = 0;
+
+//仮置き
+float rei;
 
 
 //時刻変数
@@ -299,7 +307,7 @@ int main(int argc, char *argv[]) {
 	cap.Worlds_Logs.push_back(temp);
 
 	//ミラー制御のためのMBEDマイコンへのRS232接続
-	mirror.Connect("COM4", 38400, 8, NOPARITY);
+	mirror.Connect("COM4", 115200, 8, NOPARITY);
 
 	//スレッド作成
 	bool flag = true;
@@ -308,9 +316,11 @@ int main(int argc, char *argv[]) {
 	thread thr2(OutPutLogs, &cap, &flag);//現在の画像，計算高度をデバック出力するThread
 	thread thr3(writepointcloud, &cap,&flag);//OpenGLで計算した点群を出力するThread
 	thread thr4(ShapeChangeDetection, &cap, &flag);
-	thread thr5(SendMirror, &cap, &flag);
+	//thread thr5(SendMirror, &cap, &flag);
+	thread thr5(MirrorControl, &cap, &flag);
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
+
 	//メインループ
 	while (flag)
 	{
@@ -439,7 +449,9 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 			break;
 		}
 		else if (key == 'm') {//ミラーのモード制御
-			mirror.Send("m");
+			mode++;
+			if (mode > 2) { mode = 0; }
+			//mirror.Send("m");
 		}
 		if (logtime > timeout) { 
 			*flg = false;
@@ -502,6 +514,7 @@ int CalcHeights(Capture *cap) {
 		}
 		cap->CoGs.push_back(cog);
 	}
+	cap->CoGs_Logs.push_back(cap->CoGs);//輝度重心のログ保存
 	//輝度重心⇒理想ピクセル座標に変換
 	vector<double> idpixs;
 	double u, v, w;//次のfor内でも使う
@@ -868,13 +881,15 @@ void ScapPosEvaluation(Capture *cap, bool *flg) {
 //連続difframe枚分のフレーム画像の差分画像から形状変化を検出
 void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 	int difframe = 30;
-	while (*flg)
+	while (*flg&&!shapechange)
 	{
 		if (cap->pic_cnt>difframe) {//difframe分だけ処理カウンタが進んだら
 			oldimg = cap->Pictures[cap->pic_cnt - difframe];
-			newimg = cap->Pictures[cap->pic_cnt];
+			newimg = cap->Pictures[cap->pic_cnt-1];
 			//差分画像計算
 			diff = abs(newimg - oldimg);
+			Diffs.push_back(diff.clone());
+
 			//形状変化部分を差分画像から検出
 			cv::threshold(oldimg, laserthr, 180, 255, cv::THRESH_BINARY_INV);
 			cv::threshold(newimg, laserthr2, 180, 255, cv::THRESH_BINARY_INV);//レーザーが光っているところはThresholdかける
@@ -882,15 +897,29 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 			int meanval = (int)mean(diff)[0];//差分画像の平均画素値計算
 			cv::threshold(diff, thrmask, 15.0+meanval, 255.0, cv::THRESH_BINARY);//15+画素値平均値の閾値超えを255に
 			cv::bitwise_and(thrmask, laserthr, thrmask);//レーザーが映ったところは消去
-			Diffs.push_back(diff.clone());
+			
+
 			//形状変化検出画像の部分から0次モーメント(Pixel数)計算
 			M = cv::moments(thrmask(roi));
 			if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
-			{
+			{//形状変化検出⇒レーザー移動
 				//検出点群の重心のX方向@pix座標系計算
 				Vtarget = mirrorV;//現在の電圧値をVtargetに更新
 				mode = 1;//Modeを1に変更
 				
+				
+				//レーザー中心を形状変化中心に移動
+				ltarget = M.m10 / M.m00;//x軸1次モーメント/0次モーメント=x軸重心
+				while (1)
+				{
+					if (cap->CoGs_Logs[cap->CoGs_Logs.size()-1].size()) {//最新のレーザーの輝度重心群Vector列が0より多いとき
+						double ldiff = ltarget - cap->CoGs_Logs[cap->CoGs_Logs.size()-1][0];
+						if (ldiff < lthreshold) { break; }//差分Pixelが閾値以下だとVtarget更新終了
+						Vtarget += Plaser * ldiff;//Vtargetを差分Pixelに関するP制御で更新
+					}
+				}
+				mode = 2;//形状変化部Focus Scanに変更
+				shapechange = 1;//形状変化検出フラグ更新⇒終了
 			}
 		}
 	}
@@ -941,6 +970,7 @@ void MirrorControl(Capture *cap,bool *flg) {
 
 			case 2://形状変化地帯の計測
 				//Vtargetは形状変化検知後の移動で更新されたものを使う
+				Vtarget = 1.0;
 				delv = 3.3 / max_angle * part_angle / part_laser_num;
 				if (mirrorV>3.3 - delv * 0.5 || mirrorV>Vtarget + delv * (part_laser_num / 2.0 - 0.5)) { mirrordir = -1; }
 				else if (mirrorV<0 + delv * 0.5 || mirrorV<Vtarget - delv * (part_laser_num / 2.0 - 0.5)) { mirrordir = 1; }
@@ -963,11 +993,15 @@ void MirrorControl(Capture *cap,bool *flg) {
 			snprintf(buf_mirror, 7, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
 			temp_log = buf_mirror;
 			sendlog.push_back(temp_log);
-			mirror.Send(buf_mirror);//電圧値文字列を送信
+			mirror.Send("o");//同期用文字の送信
+			mirror.Send(buf_mirror);//そこから7文字分読み取らせる
 		}
 	}
+	mirror.Send("q");
+	mirror.~RS232c();
 }
 
+//ミラーにコマンドを送る
 void SendMirror(Capture *cap, bool *flg) {
 	while (*flg)
 	{
@@ -976,8 +1010,9 @@ void SendMirror(Capture *cap, bool *flg) {
 		{
 			control_cnt++;
 			//信号をMBEDに送信
-			mirror.Send("o");//電圧値文字列を送信
+			mirror.Send("o");//"o"が送られると1フレーム分更新する
 		}
 	}
 	mirror.Send("q");
+	mirror.~RS232c();
 }
