@@ -223,7 +223,8 @@ int main(int argc, char *argv[]) {
 	cap.cam.setParam(paramTypeBasler::Param::ExposureTime, 1280.0f);
 	cap.cam.setParam(paramTypeCamera::paramFloat::FPS, fps);
 	cap.cam.setParam(paramTypeCamera::paramFloat::GAIN, gain);
-	cap.cam.setParam(paramTypeBasler::AcquisitionMode::EnableAcquisitionFrameRate);//フレームレートを固定してパラメータ決める
+	//cap.cam.setParam(paramTypeBasler::AcquisitionMode::EnableAcquisitionFrameRate);//フレームレートを固定してパラメータ決める
+	cap.cam.setParam(paramTypeBasler::AcquisitionMode::TriggerMode);//MBEDからTriggerが入ったときに撮像する
 	cap.cam.setParam(paramTypeBasler::GrabStrategy::LatestOnlyFrame);//OnebyOne:撮像画像を捨てないで遅れてもバッファに貯めた1枚ずつ送る LatestOnlyFrame:常にバッファを更新して最新の画像を撮り続ける
 																	 /*cap.cam.setParam(paramTypeBasler::CaptureType::BayerBGGrab);
 																	 cap.cam.setParam(paramTypeBasler::CaptureType::ColorBGRGrab);*/
@@ -317,7 +318,7 @@ int main(int argc, char *argv[]) {
 	thread thr3(writepointcloud, &cap,&flag);//OpenGLで計算した点群を出力するThread
 	thread thr4(ShapeChangeDetection, &cap, &flag);
 	//thread thr5(SendMirror, &cap, &flag);
-	thread thr5(MirrorControl, &cap, &flag);
+	//thread thr5(MirrorControl, &cap, &flag);
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 
@@ -338,7 +339,7 @@ int main(int argc, char *argv[]) {
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
 	if (thr4.joinable())thr4.join();
-	if (thr5.joinable())thr5.join();
+	//if (thr5.joinable())thr5.join();
 
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -442,16 +443,14 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 	while (1)
 	{
 		cv::imshow("img", cap->in_img);
-		cv::imshow("Diffs", thrmask);
+		//cv::imshow("Diffs", thrmask);
 		int key = cv::waitKey(1);
 		if (key == 'q') {
 			*flg = false;
 			break;
 		}
-		else if (key == 'm') {//ミラーのモード制御
-			mode++;
-			if (mode > 2) { mode = 0; }
-			//mirror.Send("m");
+		else if (key == 'd') {//ミラーのモード変更デバック用
+			mirror.Send("d");
 		}
 		if (logtime > timeout) { 
 			*flg = false;
@@ -903,22 +902,19 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 			M = cv::moments(thrmask(roi));
 			if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
 			{//形状変化検出⇒レーザー移動
-				//検出点群の重心のX方向@pix座標系計算
-				Vtarget = mirrorV;//現在の電圧値をVtargetに更新
-				mode = 1;//Modeを1に変更
-				
-				
+				//検出点群の重心のX方向@pix座標系計算				
 				//レーザー中心を形状変化中心に移動
 				ltarget = M.m10 / M.m00;//x軸1次モーメント/0次モーメント=x軸重心
 				while (1)
 				{
 					if (cap->CoGs_Logs[cap->CoGs_Logs.size()-1].size()) {//最新のレーザーの輝度重心群Vector列が0より多いとき
 						double ldiff = ltarget - cap->CoGs_Logs[cap->CoGs_Logs.size()-1][0];
-						if (ldiff < lthreshold) { break; }//差分Pixelが閾値以下だとVtarget更新終了
-						Vtarget += Plaser * ldiff;//Vtargetを差分Pixelに関するP制御で更新
+						if (ldiff < lthreshold) { 
+							mirror.Send("m");//形状検出後のモードに切り替え
+							break; //差分Pixelが閾値以下だとVtarget更新終了
+						}
 					}
 				}
-				mode = 2;//形状変化部Focus Scanに変更
 				shapechange = 1;//形状変化検出フラグ更新⇒終了
 			}
 		}
@@ -1005,13 +1001,15 @@ void MirrorControl(Capture *cap,bool *flg) {
 void SendMirror(Capture *cap, bool *flg) {
 	while (*flg)
 	{
-		//画像が1枚更新されたときにSwitch文1回行う
-		if (cap->Processed[cap->pic_cnt] && cap->pic_cnt>control_cnt)
-		{
-			control_cnt++;
-			//信号をMBEDに送信
-			mirror.Send("o");//"o"が送られると1フレーム分更新する
-		}
+		////画像が1枚更新されたときにSwitch文1回行う
+		//if (cap->Processed[cap->pic_cnt] && cap->pic_cnt>control_cnt)
+		//{
+		//	control_cnt++;
+		//	//信号をMBEDに送信
+		//	mirror.Send("o");//"o"が送られると1フレーム分更新する
+		//}
+		//信号をMBEDに送信
+		mirror.Send("o");//"o"が送られると1フレーム分更新する
 	}
 	mirror.Send("q");
 	mirror.~RS232c();
