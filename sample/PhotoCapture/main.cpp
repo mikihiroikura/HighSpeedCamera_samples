@@ -122,15 +122,28 @@ int main() {
 	int maxup =10;
 	int max_pic_pair = 10;//画像群の獲得個数
 	int pic_pair = 0;
+	char buf_mirror[7];//ミラーへの入力電圧文字列
+	float max_mirrorV = 2.8;//ミラーへの最大電圧
+	float min_mirrorV = 0.5;//ミラーへの最小電圧
+	float mirror_dV = (max_mirrorV - min_mirrorV) / (float)(maxup-1);//一回更新の時の差分電圧
+	float mirrorV = min_mirrorV;//ミラーの入力電圧
 	axis.Read_CRLF(buf, 256);
 	printf(buf);
+	mbed.Send("m");
+	Sleep(1);
+	snprintf(buf_mirror, 7, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
+	mbed.Send(buf_mirror);
+	Sleep(1);
+	mbed.Send("ON!");
+	Sleep(1);
 	while (1) {
 		cv::imshow("img", cap.in_img);
-		int key = cv::waitKey(1);
+		int key = cv::waitKey(10);
 		if (key == 'q')break;
-		if (cnt != 0) {
+		if (cnt > 0) {
 			for (size_t i = 0; i < num_pic; i++)
 			{
+				Sleep(10);
 				mbed.Send("ON!");
 				Sleep(1000);
 				ON_Pictures.push_back(cap.in_img.clone());
@@ -142,6 +155,8 @@ int main() {
 			RobotHeights.push_back(cap.height);
 		}
 		if (cnt==0){
+			mbed.Send("ON!");
+			Sleep(1);
 			AxisToPoint(axis, cap, 15);
 		}
 		else if(cnt>0&&cnt<maxup){
@@ -163,6 +178,12 @@ int main() {
 			cnt = 0;
 			pic_pair++;
 			if (pic_pair == max_pic_pair) {break;}
+			mirrorV += mirror_dV;
+			mbed.Send("m");
+			Sleep(1);
+			snprintf(buf_mirror, 7, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
+			mbed.Send(buf_mirror);
+			Sleep(1);
 		}
 		//if ((cap.height - cap.rob_ini_height) >= 700) { break; }
 	}

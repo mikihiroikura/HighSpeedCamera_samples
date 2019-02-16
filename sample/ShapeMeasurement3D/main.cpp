@@ -56,6 +56,7 @@ struct Capture
 	basler cam;//Baslerクラス
 	cv::Mat in_img;//光切断法入力画像
 	cv::Mat out_img;//光切断画像処理出力画像
+	cv::Mat bar_img;//棒に映るレーザーの検出用画像
 	float rob_ini_height = 30.0f;//mm
 	float height_interval = 10.0f;//mm
 	float height = rob_ini_height;//mm
@@ -101,9 +102,11 @@ double hw;
 //光切断法範囲指定
 int LS_sta_row = 150;
 int LS_end_row = 300;
-//平面計算範囲指定
-int PL_sta_row = 380;
-int PL_end_row = 400;
+
+//barに映るレーザー平面計算範囲指定
+int PL_sta_row = 390;
+int PL_end_row = 460;
+cv::Rect bar_roi(60, 390, 300, 70);
 
 /*
 ** シェーダオブジェクト
@@ -150,16 +153,23 @@ vector<double> EvalTimeLogs;
 vector<cv::Mat> Diffs;
 cv::Mat oldimg,newimg;
 cv::Mat diff;
-cv::Mat thrmask;
+cv::Mat thrmask = cv::Mat(480, 640, CV_8UC1, cv::Scalar::all(255));
 cv::Mat	thrdiff;
+int difframe = 50;//差分フレーム数
 cv::Mat laserthr, laserthr2;//レーザー部分を抜くMask
 cv::Moments M;//形状変化した点群のモーメント
-cv::Rect roi(150, 150, 340, 210);
+cv::Rect roi(200, 170, 260, 200);
+int meanval;//画像全体の平均輝度値
 int detect_cnt_thr = 100;//形状変化検知のThreshold
+int detection_num = 0;//形状変化と検出した回数
+int max_detection_num = 10;//この数値回数分連続で形状変化と検出したらOK
+double ldiff;//レーザー距離差分
+vector<double> ldiffs;
 double ltarget;//検出後の形状変化中心部のPixel座標
-double lthreshold =10.0;//レーザー位置ずれの閾値
-double Plaser = -3.3 / 600 * 0.8;//レーザーの正方向と画像Pixel座標X軸方向が逆なので負，3.3Vが600Pixel 分で重みで0.8かけた
+double lthreshold =50.0;//レーザー位置ずれの閾値
 bool shapechange = 0;//形状変化検出フラグ(0：未検出，1：検出)
+vector<float> Xlaser_log(100, 0);//レーザーの位置X座標ログ@pix座標系
+int mindiffno = 0;
 
 //ミラー制御用変数
 RS232c mirror;
@@ -179,6 +189,10 @@ vector<string> sendlog;
 string temp_log;
 unsigned int control_cnt = 0;
 
+//Thread排他制御
+cv::Mutex mutex,mutex2;
+
+
 //仮置き
 float rei;
 
@@ -192,11 +206,12 @@ int CalcHeights(Capture *cap);
 void OutPutLogs(Capture *cap, bool *flg);
 int readShaderSource(GLuint shader, const char *file);
 int writepointcloud(Capture *cap, bool *flg);
-void GetPicture(Capture *cap, bool *flg, char * filename);
+//void GetPicture(Capture *cap, bool *flg, char * filename);
 void computeMatrices();
 void ScapPosEvaluation(Capture *cap, bool *flg);
 double NormDist(double x, double a, double sig, double mean);
 void ShapeChangeDetection(Capture *cap,bool *flg);
+void ShapeChangeDetectionMultiFrame(Capture *cap, bool *flg);
 void MirrorControl(Capture *cap, bool *flg);
 void SendMirror(Capture *cap, bool *flg);
 
@@ -276,32 +291,6 @@ int main(int argc, char *argv[]) {
 	//カメラ起動
 	cap.cam.start();
 
-	//結果保存用ファイルを日時付きで作成し開く
-	FILE* fr;
-	FILE* fr2;
-	time_t timer;
-	struct tm now; 
-	struct tm *local;
-	timer = time(NULL);
-	localtime_s(&now, &timer);
-	char dir0[256];
-	strftime(dir0, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d", &now);
-	_mkdir(dir0);
-	char dir[256];
-	strftime(dir, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S", &now);
-	_mkdir(dir);
-	char dir2[256];
-	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures", &now);
-	_mkdir(dir2);
-	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures_diff", &now);
-	_mkdir(dir2);
-	char filename[256];
-	char PosEval[256];
-	strftime(filename, 256, "results/%y%m%d/%H%M%S/LS_result.csv", &now);
-	strftime(PosEval, 256, "results/%y%m%d/%H%M%S/PosEval_result.csv", &now);
-	fr = fopen(filename, "w");
-	fr2 = fopen(PosEval, "w");
-	
 	//とりあえずWorlds_logにMatを格納させる
 	vector<cv::Mat> temp;
 	temp.push_back(cv::Mat(1, 3, CV_64F, cv::Scalar::all(255)));
@@ -316,9 +305,8 @@ int main(int argc, char *argv[]) {
 	thread thr(TakePicture, &cap, &flag);//構造体に画像を保存するThread
 	thread thr2(OutPutLogs, &cap, &flag);//現在の画像，計算高度をデバック出力するThread
 	thread thr3(writepointcloud, &cap,&flag);//OpenGLで計算した点群を出力するThread
-	thread thr4(ShapeChangeDetection, &cap, &flag);
-	//thread thr5(SendMirror, &cap, &flag);
-	//thread thr5(MirrorControl, &cap, &flag);
+	thread thr4(ShapeChangeDetectionMultiFrame, &cap, &flag);//複数フレーム差分画像から移動体検知
+	
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
 
@@ -339,10 +327,36 @@ int main(int argc, char *argv[]) {
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
 	if (thr4.joinable())thr4.join();
-	//if (thr5.joinable())thr5.join();
-
+	
 	cap.cam.stop();
 	cap.cam.disconnect();
+
+	//ログ保存
+	//結果保存用ファイルを日時付きで作成し開く
+	FILE* fr;
+	FILE* fr2;
+	time_t timer;
+	struct tm now;
+	struct tm *local;
+	timer = time(NULL);
+	localtime_s(&now, &timer);
+	char dir0[256];
+	strftime(dir0, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d", &now);
+	_mkdir(dir0);
+	char dir[256];
+	strftime(dir, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S", &now);
+	_mkdir(dir);
+	char dir2[256];
+	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures", &now);
+	_mkdir(dir2);
+	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures_diff", &now);
+	_mkdir(dir2);
+	char filename[256];
+	char PosEval[256];
+	strftime(filename, 256, "results/%y%m%d/%H%M%S/LS_result.csv", &now);
+	strftime(PosEval, 256, "results/%y%m%d/%H%M%S/PosEval_result.csv", &now);
+	fr = fopen(filename, "w");
+	fr2 = fopen(PosEval, "w");
 
 	//cap内のLogを保存
 	printf("saving Logs...   ");
@@ -381,16 +395,16 @@ int main(int argc, char *argv[]) {
 	strftime(diffsubname, 128, "results/%y%m%d/%H%M%S/Pictures_diff/frame", &now);
 	//cv::VideoWriter writer(videoname, cv::VideoWriter::fourcc('X', 'V', 'I', 'D'), 750.0, cv::Size(640, 480), false);//モノクロなのでFalse指定
 	//if (!writer.isOpened()) { return -1; }
-	for (int i = 0; i < cap.Pictures.size(); i++) {
+	for (int i = 0; i < cap.Pictures.size(); i++) {//生画像保存
 		//writer << cap.Pictures[i].clone();
 		sprintf(picturename, "%s%d.png", picsubname, i);//jpg不可逆圧縮，png可逆圧縮
 		cv::imwrite(picturename, cap.Pictures[i]);
 	}
-	for (int i = 0; i < Diffs.size(); i++)
-	{
-		sprintf(diffname, "%s%d.png", diffsubname, i);//jpg不可逆圧縮，png可逆圧縮
-		cv::imwrite(diffname, Diffs[i]);
-	}
+	//for (int i = 0; i < Diffs.size(); i++)//差分画像保存
+	//{
+	//	sprintf(diffname, "%s%d.png", diffsubname, i);//jpg不可逆圧縮，png可逆圧縮
+	//	cv::imwrite(diffname, Diffs[i]);
+	//}
 	printf("Imgs finish!\n");
 	//writer.release();
 	#endif // SAVE_IMG_
@@ -418,6 +432,7 @@ int main(int argc, char *argv[]) {
 //ただ，capに写真を格納する
 void TakePicture(Capture *cap, bool *flg) {
 	while (*flg) {
+		//ここは排他制御しない
 		cap->Pictures.push_back((cv::Mat(480, 640, CV_8UC1, cv::Scalar::all(255))));
 		cap->cam.captureFrame(cap->Pictures[cap->Pictures.size()-1].data);
 		cap->Processed[cap->Pictures.size() - 1] = true;//今追加された写真の番号部分はTrueにする
@@ -427,23 +442,28 @@ void TakePicture(Capture *cap, bool *flg) {
 
 //thread内関数
 //指定したディレクトリの画像を入力する
-void GetPicture(Capture *cap, bool *flg,char *filename) {
-	cv::Mat img = cv::imread(filename,cv::IMREAD_GRAYSCALE);
-	while (*flg)
-	{
-		cap->Pictures.push_back(img);
-		cap->Processed[cap->Pictures.size() - 1] = true;//今追加された写真の番号部分はTrueにする
-		cap->Processed.push_back(false);//最新番号の次の番号部分はFalseとしておく
-	}
-}
+//void GetPicture(Capture *cap, bool *flg,char *filename) {
+//	cv::Mat img = cv::imread(filename,cv::IMREAD_GRAYSCALE);
+//	while (*flg)
+//	{
+//		cap->Pictures.push_back(img);
+//		cap->Processed[cap->Pictures.size() - 1] = true;//今追加された写真の番号部分はTrueにする
+//		cap->Processed.push_back(false);//最新番号の次の番号部分はFalseとしておく
+//	}
+//}
 
 //thread2内の関数
 //標準出力で現在の写真，時刻と高度
 void OutPutLogs(Capture *cap ,bool *flg) {
 	while (1)
 	{
-		cv::imshow("img", cap->in_img);
-		//cv::imshow("Diffs", thrmask);
+		if (cap->pic_cnt > 1) {
+			{
+				cv::AutoLock showlock(mutex);//出力のAutolock
+				cv::imshow("img", cap->Pictures[cap->pic_cnt - 2]);
+			}//アンロック
+			cv::imshow("Diffs", thrmask);
+		}
 		int key = cv::waitKey(1);
 		if (key == 'q') {
 			*flg = false;
@@ -457,10 +477,10 @@ void OutPutLogs(Capture *cap ,bool *flg) {
 			break;
 		}
 		if (cap->Worlds_Logs.size()>0){
-			if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size() == 0) { printf("Time: ,%lf, s Bar: ,%lf, mm  Height: ,NONE,\n", logtime,cap->barX[cap->barXint]); }
+			if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size() == 0) { printf("Time: ,%lf, s Bar: ,%lf, mm  Height: ,NONE    , mm  Detectcnt: %d, Continuous Detect: %d\n", logtime,cap->barX[cap->barXint], (int)M.m00 / 255,detection_num); }
 			else {
 				result = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1][0].at<double>(0, 2);
-				printf("Time: ,%lf, s Bar: ,%lf, mm  Height: ,%lf, mm\n", logtime, cap->barX[cap->barXint],result);
+				printf("Time: ,%lf, s Bar: ,%lf, mm  Height: ,%.4lf, mm Detectcnt: %d, Continuous Detect: %d\n", logtime, cap->barX[cap->barXint],result, (int)M.m00 / 255,detection_num);
 			}
 		}
 		
@@ -479,22 +499,28 @@ int CalcHeights(Capture *cap) {
 	cap->barPoint.clear();
 	cap->barIdealPixs.clear();
 	cap->lambdas.clear();
-	//画像配列群から次の処理カウンターの番号の画像をin_imgに格納する
-	cap->in_img = cap->Pictures[cap->pic_cnt];	
+	{
+		cv::AutoLock measurelock(mutex);//排他制御，PicturesからCloneしたらアンロック
+		//画像配列群から次の処理カウンターの番号の画像をin_imgに格納する
+		cap->in_img = cap->Pictures[cap->pic_cnt].clone();
+	}
 	//輝度重心の計算
 	cv::threshold(cap->in_img, cap->out_img, 150.0, 255.0, cv::THRESH_BINARY);
 	cv::bitwise_and(cap->in_img, cap->out_img, cap->out_img);
+	//Barに映るレーザー輝度重心の計算
+	cv::threshold(cap->in_img(bar_roi), cap->bar_img, 50, 255.0, cv::THRESH_BINARY);
+	cv::bitwise_and(cap->in_img(bar_roi), cap->bar_img, cap->bar_img);
 	//Reference棒に映る点群の輝度重心をとる
-	for (int i = PL_sta_row; i < PL_end_row; i++) {
+	for (int i = 0; i < cap->bar_img.rows; i++) {
 		moment = 0.0;
 		mass = 0.0;
-		for (int j = 0; j < cap->out_img.cols; j++) {
-			mass += cap->out_img.data[i*cap->out_img.cols + j];
-			moment += j * cap->out_img.data[i*cap->out_img.cols + j];
+		for (int j = 0; j < cap->bar_img.cols; j++) {
+			mass += cap->bar_img.data[i*cap->bar_img.cols + j];
+			moment += j * cap->bar_img.data[i*cap->bar_img.cols + j];
 		}
 		if (mass <= 0) { cog = 0; }
 		else {
-			cog = moment / mass;
+			cog = moment / mass+bar_roi.x;
 		}
 		cap->barPoint.push_back(cog);
 	}
@@ -506,13 +532,23 @@ int CalcHeights(Capture *cap) {
 			mass += cap->out_img.data[i*cap->out_img.cols + j];
 			moment += j * cap->out_img.data[i*cap->out_img.cols + j];
 		}
-		if (mass <= 0) { cog = 0; }
+		/*if (mass <= 0) { cog = 0; }
 		else {
+			cog = moment / mass;
+			cap->row_num.push_back(i);
+		}*/
+		if (mass > 0) {
 			cog = moment / mass;
 			cap->row_num.push_back(i);
 		}
 		cap->CoGs.push_back(cog);
 	}
+	{
+		cv::AutoLock coglock(mutex2);//Xlaser_logの排他制御
+		if (cap->CoGs.size() == 0) {Xlaser_log.push_back(0);}
+		else { Xlaser_log.push_back((float)cap->CoGs[cap->CoGs.size() / 2]); }
+		Xlaser_log.erase(Xlaser_log.begin());
+	}//アンロック
 	cap->CoGs_Logs.push_back(cap->CoGs);//輝度重心のログ保存
 	//輝度重心⇒理想ピクセル座標に変換
 	vector<double> idpixs;
@@ -879,45 +915,80 @@ void ScapPosEvaluation(Capture *cap, bool *flg) {
 
 //連続difframe枚分のフレーム画像の差分画像から形状変化を検出
 void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
-	int difframe = 30;
 	while (*flg&&!shapechange)
 	{
-		if (cap->pic_cnt>difframe) {//difframe分だけ処理カウンタが進んだら
-			oldimg = cap->Pictures[cap->pic_cnt - difframe];
-			newimg = cap->Pictures[cap->pic_cnt-1];
-			//差分画像計算
-			diff = abs(newimg - oldimg);
-			Diffs.push_back(diff.clone());
+		if (cap->pic_cnt>difframe)//difframe分だけ処理カウンタが進んだ
+		{
+			cv::AutoLock difframelock(mutex);//排他処理
+			oldimg = cap->Pictures[cap->pic_cnt - difframe].clone();
+			newimg = cap->Pictures[cap->pic_cnt - 1].clone();
+		}//アンロック
+		if (oldimg.data == NULL || newimg.data == NULL) { continue; }
+		//差分画像計算
+		diff = abs(newimg - oldimg);
+		Diffs.push_back(diff.clone());
 
-			//形状変化部分を差分画像から検出
-			cv::threshold(oldimg, laserthr, 180, 255, cv::THRESH_BINARY_INV);
-			cv::threshold(newimg, laserthr2, 180, 255, cv::THRESH_BINARY_INV);//レーザーが光っているところはThresholdかける
-			cv::bitwise_and(laserthr, laserthr2, laserthr);//二つのレーザー画像のThreshold画像をマージ
-			int meanval = (int)mean(diff)[0];//差分画像の平均画素値計算
-			cv::threshold(diff, thrmask, 15.0+meanval, 255.0, cv::THRESH_BINARY);//15+画素値平均値の閾値超えを255に
-			cv::bitwise_and(thrmask, laserthr, thrmask);//レーザーが映ったところは消去
+		//形状変化部分を差分画像から検出
+		cv::threshold(oldimg, laserthr, 50, 255, cv::THRESH_BINARY);
+		cv::threshold(newimg, laserthr2, 50, 255, cv::THRESH_BINARY);//レーザーが光っているところはThresholdかける
+		cv::GaussianBlur(laserthr, laserthr, cv::Size(17, 17), 0);
+		cv::GaussianBlur(laserthr2, laserthr2, cv::Size(17, 17), 0);
+		cv::threshold(laserthr, laserthr, 0, 255, cv::THRESH_BINARY);
+		cv::threshold(laserthr2, laserthr2, 0, 255, cv::THRESH_BINARY);
+		cv::bitwise_not(laserthr, laserthr);
+		cv::bitwise_not(laserthr2, laserthr2);
+		cv::bitwise_and(laserthr, laserthr2, laserthr);//二つのレーザー画像のThreshold画像をマージ
+		meanval = (int)mean(diff)[0];//差分画像の平均画素値計算
+		cv::threshold(diff, thrmask, 15.0+meanval, 255.0, cv::THRESH_BINARY);//15+画素値平均値の閾値超えを255に
+		cv::bitwise_and(thrmask, laserthr, thrmask);//レーザーが映ったところは消去
 			
 
-			//形状変化検出画像の部分から0次モーメント(Pixel数)計算
-			M = cv::moments(thrmask(roi));
-			if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
-			{//形状変化検出⇒レーザー移動
-				//検出点群の重心のX方向@pix座標系計算				
+		//形状変化検出画像の部分から0次モーメント(Pixel数)計算
+		M = cv::moments(thrmask(roi).clone());
+		if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
+		{
+			detection_num++;
+			if (detection_num > max_detection_num) {
+				//形状変化検出⇒レーザー移動
+				//検出点群の重心のX方向@pix座標系計算
 				//レーザー中心を形状変化中心に移動
-				ltarget = M.m10 / M.m00;//x軸1次モーメント/0次モーメント=x軸重心
-				while (1)
+				ltarget = M.m10 / M.m00 + roi.x;//x軸1次モーメント/0次モーメント=x軸重心
+				//while (1)
+				//{
+				//	if (cap->CoGs_Logs[cap->CoGs_Logs.size() - 2].size()) {//最新のレーザーの輝度重心群Vector列が0より多いとき
+				//		ldiff = ltarget - cap->CoGs_Logs[cap->CoGs_Logs.size() - 2][(int)(cap->CoGs_Logs[cap->CoGs_Logs.size() - 2].size() / 2)];
+				//		ldiffs.push_back(ldiff);
+				//		if (abs(ldiff) < lthreshold) {
+				//			mirror.Send("m");//形状検出後のモードに切り替え
+				//			break; //差分Pixelが閾値以下だとVtarget更新終了
+				//		}
+				//	}
+				//	Sleep(1);
+				//}
 				{
-					if (cap->CoGs_Logs[cap->CoGs_Logs.size()-1].size()) {//最新のレーザーの輝度重心群Vector列が0より多いとき
-						double ldiff = ltarget - cap->CoGs_Logs[cap->CoGs_Logs.size()-1][0];
-						if (ldiff < lthreshold) { 
-							mirror.Send("m");//形状検出後のモードに切り替え
-							break; //差分Pixelが閾値以下だとVtarget更新終了
+					cv::AutoLock xlaserlock(mutex2);//Xlaser_logの排他制御
+					float minldiff = 1000;
+					for (int i = 0; i < Xlaser_log.size(); i++)
+					{
+						ldiff = Xlaser_log[i] - ltarget;
+						if (minldiff > ldiff) {
+							minldiff = ldiff;
+							mindiffno = i;
 						}
 					}
-				}
+				}//アンロック
+				char frameno[4];
+				snprintf(frameno, 4, "%d", mindiffno);
+				mirror.Send("l");//フレーム番号送信前のフラグ
+				Sleep(0.01);
+				mirror.Send(frameno);//フレーム番号送信
 				shapechange = 1;//形状変化検出フラグ更新⇒終了
 			}
 		}
+		else{
+			detection_num = 0;
+		}
+		
 	}
 }
 

@@ -90,7 +90,7 @@ int main() {
 	//‰æ‘œ‚Ì•Û‘¶
 	for (int i = 0; i < Pictures.size(); i++)
 	{
-		cv::imwrite(save_dir + "No" + to_string(int(i)) + ".jpg", Pictures[i]);
+		cv::imwrite(save_dir + "No" + to_string(int(i)) + ".png", Pictures[i]);
 	}
 	flag = false;
 	if (thr.joinable())thr.join();
