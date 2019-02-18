@@ -40,6 +40,8 @@ public:
 	bool Read_CRLF(char* Buff, int NumberOfCharactersToRead);
 	//文字列を送信 Send(送信文字列) 返り値　TRUE = 成功　FALSE = 失敗
 	bool Send(const char* word);
+	//CHAR文字を送信 Send(送信文字列) 返り値　TRUE = 成功　FALSE = 失敗
+	bool Send_CHAR(unsigned char wordchar);
 	//接続の状態を取得します
 	bool isLink();
 	//デストラクタ　ポートを閉じます
@@ -158,6 +160,15 @@ bool RS232c::Read_CRLF(char* Buff, int NumberOfCharactersToRead) {
 
 bool RS232c::Send(const char* word) {
 	if (0 == WriteFile(m_hComm, word, strlen(word), &size, NULL)) {
+		return FALSE;
+	}
+	else {
+		return TRUE;
+	}
+}
+
+bool RS232c::Send_CHAR(unsigned char wordchar) {
+	if (0 == WriteFile(m_hComm, &wordchar, 1, &size, NULL)) {
 		return FALSE;
 	}
 	else {

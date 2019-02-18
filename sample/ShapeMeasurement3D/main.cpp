@@ -158,18 +158,23 @@ cv::Mat	thrdiff;
 int difframe = 50;//差分フレーム数
 cv::Mat laserthr, laserthr2;//レーザー部分を抜くMask
 cv::Moments M;//形状変化した点群のモーメント
-cv::Rect roi(200, 170, 260, 200);
+cv::Rect roi(260, 170, 200, 200);
 int meanval;//画像全体の平均輝度値
-int detect_cnt_thr = 100;//形状変化検知のThreshold
+int detect_cnt_thr = 50;//形状変化検知のThreshold
 int detection_num = 0;//形状変化と検出した回数
-int max_detection_num = 10;//この数値回数分連続で形状変化と検出したらOK
+int max_detection_num = 5;//この数値回数分連続で形状変化と検出したらOK
 double ldiff;//レーザー距離差分
 vector<double> ldiffs;
 double ltarget;//検出後の形状変化中心部のPixel座標
 double lthreshold =50.0;//レーザー位置ずれの閾値
 bool shapechange = 0;//形状変化検出フラグ(0：未検出，1：検出)
-vector<float> Xlaser_log(100, 0);//レーザーの位置X座標ログ@pix座標系
+vector<float> Xlaser_log(100*2, 0);//レーザーの位置X座標ログ@pix座標系
 int mindiffno = 0;
+vector<int> FrameNos;//newimgのフレーム番号
+vector<int> Detect_pixcnt_log;//形状変化検出したピクセル点数のログ
+vector<int> Detect_num_log;//形状変化と検知した回数のログ
+unsigned int pic_cnt_old;//一回前の処理カウンター番号
+
 
 //ミラー制御用変数
 RS232c mirror;
@@ -352,11 +357,11 @@ int main(int argc, char *argv[]) {
 	strftime(dir2, 256, "C:/Users/Mikihiro Ikura/Documents/GitHub/HighSpeedCamera/sample/ShapeMeasurement3D/results/%y%m%d/%H%M%S/Pictures_diff", &now);
 	_mkdir(dir2);
 	char filename[256];
-	char PosEval[256];
+	char ShapeChange[256];
 	strftime(filename, 256, "results/%y%m%d/%H%M%S/LS_result.csv", &now);
-	strftime(PosEval, 256, "results/%y%m%d/%H%M%S/PosEval_result.csv", &now);
+	strftime(ShapeChange, 256, "results/%y%m%d/%H%M%S/ShapeChange_result.csv", &now);
 	fr = fopen(filename, "w");
-	fr2 = fopen(PosEval, "w");
+	fr2 = fopen(ShapeChange, "w");
 
 	//cap内のLogを保存
 	printf("saving Logs...   ");
@@ -379,8 +384,13 @@ int main(int argc, char *argv[]) {
 		}
 		fprintf(fr, "\n");
 	}
+	for (int i = 0; i < FrameNos.size(); i++)//差分画像保存
+	{
+		fprintf(fr2, "%d,%d,%d\n", FrameNos[i],Detect_pixcnt_log[i],Detect_num_log[i]);
+	}
 	printf("Logs finish!\n");
 	fclose(fr);
+	fclose(fr2);
 
 	//画像を保存
 	#ifdef SAVE_IMG_
@@ -400,11 +410,6 @@ int main(int argc, char *argv[]) {
 		sprintf(picturename, "%s%d.png", picsubname, i);//jpg不可逆圧縮，png可逆圧縮
 		cv::imwrite(picturename, cap.Pictures[i]);
 	}
-	//for (int i = 0; i < Diffs.size(); i++)//差分画像保存
-	//{
-	//	sprintf(diffname, "%s%d.png", diffsubname, i);//jpg不可逆圧縮，png可逆圧縮
-	//	cv::imwrite(diffname, Diffs[i]);
-	//}
 	printf("Imgs finish!\n");
 	//writer.release();
 	#endif // SAVE_IMG_
@@ -795,8 +800,8 @@ int writepointcloud(Capture *cap, bool *flg) {
 		glReadBuffer(GL_BACK);
 		glReadPixels(0, 0, 1024, 768, GL_BGR, GL_UNSIGNED_BYTE, gl_img.data);
 		cv::flip(gl_img, gl_img, 0);
-		cv::imshow("gl_img",gl_img);
-		cv::waitKey(1);
+		/*cv::imshow("gl_img",gl_img);
+		cv::waitKey(1);*/
 		gl_img_Logs.push_back(gl_img.clone());//更新時間は光切断法と一致していない
 	}
 	glDeleteVertexArrays(1, &vao);
@@ -922,29 +927,30 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 			cv::AutoLock difframelock(mutex);//排他処理
 			oldimg = cap->Pictures[cap->pic_cnt - difframe].clone();
 			newimg = cap->Pictures[cap->pic_cnt - 1].clone();
+			
+			
 		}//アンロック
-		if (oldimg.data == NULL || newimg.data == NULL) { continue; }
+		if (oldimg.data == NULL || newimg.data == NULL || cap->pic_cnt <= pic_cnt_old) { continue; }
+		
+		pic_cnt_old = cap->pic_cnt;
 		//差分画像計算
 		diff = abs(newimg - oldimg);
-		Diffs.push_back(diff.clone());
 
 		//形状変化部分を差分画像から検出
-		cv::threshold(oldimg, laserthr, 50, 255, cv::THRESH_BINARY);
-		cv::threshold(newimg, laserthr2, 50, 255, cv::THRESH_BINARY);//レーザーが光っているところはThresholdかける
-		cv::GaussianBlur(laserthr, laserthr, cv::Size(17, 17), 0);
-		cv::GaussianBlur(laserthr2, laserthr2, cv::Size(17, 17), 0);
+		cv::threshold(oldimg(roi), laserthr, 60, 255, cv::THRESH_BINARY);
+		cv::threshold(newimg(roi), laserthr2, 60, 255, cv::THRESH_BINARY);//レーザーが光っているところはThresholdかける
+		cv::bitwise_or(laserthr, laserthr2, laserthr);
+		cv::GaussianBlur(laserthr, laserthr, cv::Size(51, 17), 0);
 		cv::threshold(laserthr, laserthr, 0, 255, cv::THRESH_BINARY);
-		cv::threshold(laserthr2, laserthr2, 0, 255, cv::THRESH_BINARY);
 		cv::bitwise_not(laserthr, laserthr);
-		cv::bitwise_not(laserthr2, laserthr2);
-		cv::bitwise_and(laserthr, laserthr2, laserthr);//二つのレーザー画像のThreshold画像をマージ
 		meanval = (int)mean(diff)[0];//差分画像の平均画素値計算
-		cv::threshold(diff, thrmask, 15.0+meanval, 255.0, cv::THRESH_BINARY);//15+画素値平均値の閾値超えを255に
-		cv::bitwise_and(thrmask, laserthr, thrmask);//レーザーが映ったところは消去
+		cv::bitwise_and(diff(roi), laserthr, thrmask);//レーザーが映ったところは消去
+		cv::threshold(thrmask, thrmask, 15.0+meanval, 255.0, cv::THRESH_BINARY);//15+画素値平均値の閾値超えを255に
+		
 			
 
 		//形状変化検出画像の部分から0次モーメント(Pixel数)計算
-		M = cv::moments(thrmask(roi).clone());
+		M = cv::moments(thrmask);
 		if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
 		{
 			detection_num++;
@@ -953,42 +959,31 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 				//検出点群の重心のX方向@pix座標系計算
 				//レーザー中心を形状変化中心に移動
 				ltarget = M.m10 / M.m00 + roi.x;//x軸1次モーメント/0次モーメント=x軸重心
-				//while (1)
-				//{
-				//	if (cap->CoGs_Logs[cap->CoGs_Logs.size() - 2].size()) {//最新のレーザーの輝度重心群Vector列が0より多いとき
-				//		ldiff = ltarget - cap->CoGs_Logs[cap->CoGs_Logs.size() - 2][(int)(cap->CoGs_Logs[cap->CoGs_Logs.size() - 2].size() / 2)];
-				//		ldiffs.push_back(ldiff);
-				//		if (abs(ldiff) < lthreshold) {
-				//			mirror.Send("m");//形状検出後のモードに切り替え
-				//			break; //差分Pixelが閾値以下だとVtarget更新終了
-				//		}
-				//	}
-				//	Sleep(1);
-				//}
 				{
 					cv::AutoLock xlaserlock(mutex2);//Xlaser_logの排他制御
 					float minldiff = 1000;
 					for (int i = 0; i < Xlaser_log.size(); i++)
 					{
-						ldiff = Xlaser_log[i] - ltarget;
+						ldiff = abs(Xlaser_log[i] - ltarget);
 						if (minldiff > ldiff) {
 							minldiff = ldiff;
 							mindiffno = i;
 						}
 					}
 				}//アンロック
-				char frameno[4];
-				snprintf(frameno, 4, "%d", mindiffno);
+				unsigned char frameno = (unsigned char)mindiffno;
 				mirror.Send("l");//フレーム番号送信前のフラグ
-				Sleep(0.01);
-				mirror.Send(frameno);//フレーム番号送信
+				mirror.Send_CHAR(frameno);//フレーム番号送信
 				shapechange = 1;//形状変化検出フラグ更新⇒終了
 			}
 		}
 		else{
 			detection_num = 0;
 		}
-		
+		//ログ保存
+		FrameNos.push_back(pic_cnt_old - 1);
+		Detect_pixcnt_log.push_back((int)M.m00 / 255);
+		Detect_num_log.push_back(detection_num);
 	}
 }
 
