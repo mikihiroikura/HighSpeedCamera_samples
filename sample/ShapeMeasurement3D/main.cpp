@@ -44,6 +44,7 @@
 
 
 //DEFINE群
+#define ROBOT_MOVE_//ロボットを動かす
 #define SAVE_IMG_         //画像と動画をLogに残す
 //#define MATLAB_GRAPHICS_  //MATLABを起動し，Logをプロットする
 
@@ -53,7 +54,7 @@ struct Capture
 {
 	bool flag;//メインループ実行フラグ
 	unsigned int pic_cnt;//処理カウンター
-	basler cam;//Baslerクラス
+	basler cam;//Baslerクラス	
 	cv::Mat in_img;//光切断法入力画像
 	cv::Mat out_img;//光切断画像処理出力画像
 	cv::Mat bar_img;//棒に映るレーザーの検出用画像
@@ -95,9 +96,15 @@ double result, logtime ,det;
 double moment, mass, cog,rowmass,colmass;
 int rowcnt;
 cv::Mat lhand, rhand,sol;
-double timeout = 30.0;
+float timeout = 30.0;
 cv::Mat campnt, wldpnt;
 double hw;
+int outputlog_num_max = 40;//出力する3次元座標の数
+int outputlog_num_part = 20;//部分スキャンするときのレーザー本数
+bool numchange_flg = false;//部分スキャンになったときに立てるフラグ
+int numchange_timing = -1;//部分スキャンになった時のVector配列のIndex番号
+int imgsavecnt = 0;//画像保存場所
+int outputimgcnt = 0;//標準出力の画像列場所
 
 //光切断法範囲指定
 int LS_sta_row = 150;
@@ -160,7 +167,7 @@ cv::Mat laserthr, laserthr2;//レーザー部分を抜くMask
 cv::Moments M;//形状変化した点群のモーメント
 cv::Rect roi(260, 170, 200, 200);
 int meanval;//画像全体の平均輝度値
-int detect_cnt_thr = 50;//形状変化検知のThreshold
+int detect_cnt_thr = 30;//形状変化検知のThreshold
 int detection_num = 0;//形状変化と検出した回数
 int max_detection_num = 5;//この数値回数分連続で形状変化と検出したらOK
 double ldiff;//レーザー距離差分
@@ -168,12 +175,14 @@ vector<double> ldiffs;
 double ltarget;//検出後の形状変化中心部のPixel座標
 double lthreshold =50.0;//レーザー位置ずれの閾値
 bool shapechange = 0;//形状変化検出フラグ(0：未検出，1：検出)
-vector<float> Xlaser_log(100*2, 0);//レーザーの位置X座標ログ@pix座標系
+vector<float> Xlaser_log(outputlog_num_max*2, 0);//レーザーの位置X座標ログ@pix座標系
 int mindiffno = 0;
 vector<int> FrameNos;//newimgのフレーム番号
 vector<int> Detect_pixcnt_log;//形状変化検出したピクセル点数のログ
 vector<int> Detect_num_log;//形状変化と検知した回数のログ
-unsigned int pic_cnt_old;//一回前の処理カウンター番号
+int detect_cnt;//現在の検出処理カウンター番号
+int detect_cnt_old;//一回前の検出処理カウンター番号
+bool shapedetection_flg = false;
 
 
 //ミラー制御用変数
@@ -195,7 +204,7 @@ string temp_log;
 unsigned int control_cnt = 0;
 
 //Thread排他制御
-cv::Mutex mutex,mutex2;
+cv::Mutex mutex,mutex2,flg;
 
 
 //仮置き
@@ -211,14 +220,9 @@ int CalcHeights(Capture *cap);
 void OutPutLogs(Capture *cap, bool *flg);
 int readShaderSource(GLuint shader, const char *file);
 int writepointcloud(Capture *cap, bool *flg);
-//void GetPicture(Capture *cap, bool *flg, char * filename);
 void computeMatrices();
-void ScapPosEvaluation(Capture *cap, bool *flg);
-double NormDist(double x, double a, double sig, double mean);
-void ShapeChangeDetection(Capture *cap,bool *flg);
 void ShapeChangeDetectionMultiFrame(Capture *cap, bool *flg);
-void MirrorControl(Capture *cap, bool *flg);
-void SendMirror(Capture *cap, bool *flg);
+void AxisToPoint(RS232c *axis, int *pointnum);//単軸ロボットのポイント指定移動
 
 int main(int argc, char *argv[]) {
 	LARGE_INTEGER end;
@@ -228,6 +232,22 @@ int main(int argc, char *argv[]) {
 	int height = 480;
 	float  fps = 750.0f;
 	float gain = 1.0f;
+
+	#ifdef ROBOT_MOVE_
+	// 単軸ロボットのRS232接続
+	RS232c axis;
+	char buf[256];
+	axis.Connect("COM3", 38400, ODDPARITY, 0, 0, 0, 20000, 20000);
+	//単軸ロボットサーボ入力
+	axis.Send("@SRVO1.1\r\n");
+	axis.Read_CRLF(buf, 256);
+	printf(buf);
+	Sleep(1000);
+	//スタート地点へ移動
+	int startp = 30;
+	AxisToPoint(&axis, &startp);
+	#endif // ROBOT_MOVE_
+
 
 	//キャプチャ用の構造体の宣言
 	Capture cap;
@@ -288,18 +308,19 @@ int main(int argc, char *argv[]) {
 	}
 	fclose(fp);
 
+	//先に画像Vectorを用意する
+	for (size_t i = 0; i < (int)(timeout*fps+100); i++)
+	{
+		cap.Pictures.push_back((cv::Mat(480, 640, CV_8UC1, cv::Scalar::all(255))));
+		cap.Processed.push_back(false);
+	}
+	
+
 	//detの計算をする
 	det = 1.0 / (cap.stretch_mat[0] - cap.stretch_mat[1] * cap.stretch_mat[2]);//外でやる
 
-	
-
 	//カメラ起動
 	cap.cam.start();
-
-	//とりあえずWorlds_logにMatを格納させる
-	vector<cv::Mat> temp;
-	temp.push_back(cv::Mat(1, 3, CV_64F, cv::Scalar::all(255)));
-	cap.Worlds_Logs.push_back(temp);
 
 	//ミラー制御のためのMBEDマイコンへのRS232接続
 	mirror.Connect("COM4", 115200, 8, NOPARITY);
@@ -311,6 +332,12 @@ int main(int argc, char *argv[]) {
 	thread thr2(OutPutLogs, &cap, &flag);//現在の画像，計算高度をデバック出力するThread
 	thread thr3(writepointcloud, &cap,&flag);//OpenGLで計算した点群を出力するThread
 	thread thr4(ShapeChangeDetectionMultiFrame, &cap, &flag);//複数フレーム差分画像から移動体検知
+#ifdef ROBOT_MOVE_
+	int endp = 31;
+	thread thr5(AxisToPoint, &axis, &endp);//ロボットを350mmへ下す
+#endif // ROBOT_MOVE_
+
+	
 	
 	Sleep(1);//threadのみ1ms実行し，画像を格納させる
 	if (!QueryPerformanceCounter(&start)) { return 0; }
@@ -323,6 +350,10 @@ int main(int argc, char *argv[]) {
 			if (!QueryPerformanceCounter(&end)) { return 0; }
 			logtime = (double)(end.QuadPart - start.QuadPart) / freq.QuadPart;
 			cap.Log_times.push_back(logtime);
+			if (numchange_flg){//フラグがたったら
+				numchange_timing = cap.Log_times.size() - 1;
+				numchange_flg = false;
+			}
 			
 		}
 		
@@ -332,6 +363,10 @@ int main(int argc, char *argv[]) {
 	if (thr2.joinable())thr2.join();
 	if (thr3.joinable())thr3.join();
 	if (thr4.joinable())thr4.join();
+#ifdef ROBOT_MOVE_
+	if (thr5.joinable())thr5.join();
+#endif // ROBOT_MOVE_
+
 	
 	cap.cam.stop();
 	cap.cam.disconnect();
@@ -363,24 +398,52 @@ int main(int argc, char *argv[]) {
 	fr = fopen(filename, "w");
 	fr2 = fopen(ShapeChange, "w");
 
+	//単軸ロボット切断
+#ifdef ROBOT_MOVE_
+	axis.Send("@SRVO0.1\r\n");
+	axis.Read_CRLF(buf, 256);
+#endif // ROBOT_MOVE_
+
+	
 	//cap内のLogを保存
 	printf("saving Logs...   ");
 	for (int i = 0; i < cap.Log_times.size(); i++){
-		fprintf(fr, "%lf,\n", cap.Log_times[i]);
-		for (int j = 0; j < cap.Row_num_Logs[i].size(); j++){
+		fprintf(fr, "%lf,", cap.Log_times[i]);
+		/*for (int j = 0; j < cap.Row_num_Logs[i].size(); j++){
 			fprintf(fr, "%d,", cap.Row_num_Logs[i][j]);
+		}*/
+		//fprintf(fr, "\n");
+		if (i == numchange_timing) { 
+			outputlog_num_max = outputlog_num_part;
+			fprintf(fr, "%d,",1);
 		}
+		#ifdef ROBOT_MOVE_
+		if (i==0){
+			fprintf(fr, "%d,", 2);
+		}
+		#endif // ROBOT_MOVE_
+
 		fprintf(fr, "\n");
-		for (int j = 0; j < cap.Worlds_Logs[i].size(); j++){
-			fprintf(fr, "%lf,", cap.Worlds_Logs[i][j].at<double>(0,0));
+		for (int j = 0; j < cap.Worlds_Logs[i].size(); j++) {
+			fprintf(fr, "%lf,", cap.Worlds_Logs[i][j].at<double>(0, 0));
 		}
+		if (cap.Worlds_Logs[i].size()==0){
+			fprintf(fr, "%lf,", 0);
+		}
+		
 		fprintf(fr, "\n");
 		for (int j = 0; j < cap.Worlds_Logs[i].size(); j++) {
 			fprintf(fr, "%lf,", cap.Worlds_Logs[i][j].at<double>(0, 1));
 		}
+		if (cap.Worlds_Logs[i].size() == 0) {
+			fprintf(fr, "%lf,", 0);
+		}
 		fprintf(fr, "\n");
 		for (int j = 0; j < cap.Worlds_Logs[i].size(); j++) {
 			fprintf(fr, "%lf,", cap.Worlds_Logs[i][j].at<double>(0, 2));
+		}
+		if (cap.Worlds_Logs[i].size() == 0) {
+			fprintf(fr, "%lf,",0);
 		}
 		fprintf(fr, "\n");
 	}
@@ -405,7 +468,7 @@ int main(int argc, char *argv[]) {
 	strftime(diffsubname, 128, "results/%y%m%d/%H%M%S/Pictures_diff/frame", &now);
 	//cv::VideoWriter writer(videoname, cv::VideoWriter::fourcc('X', 'V', 'I', 'D'), 750.0, cv::Size(640, 480), false);//モノクロなのでFalse指定
 	//if (!writer.isOpened()) { return -1; }
-	for (int i = 0; i < cap.Pictures.size(); i++) {//生画像保存
+	for (int i = 0; i < imgsavecnt; i++) {//生画像保存
 		//writer << cap.Pictures[i].clone();
 		sprintf(picturename, "%s%d.png", picsubname, i);//jpg不可逆圧縮，png可逆圧縮
 		cv::imwrite(picturename, cap.Pictures[i]);
@@ -436,37 +499,28 @@ int main(int argc, char *argv[]) {
 //thread内の関数
 //ただ，capに写真を格納する
 void TakePicture(Capture *cap, bool *flg) {
+	cv::Mat temp = cv::Mat(480, 640, CV_8UC1, cv::Scalar::all(255));
 	while (*flg) {
 		//ここは排他制御しない
-		cap->Pictures.push_back((cv::Mat(480, 640, CV_8UC1, cv::Scalar::all(255))));
-		cap->cam.captureFrame(cap->Pictures[cap->Pictures.size()-1].data);
-		cap->Processed[cap->Pictures.size() - 1] = true;//今追加された写真の番号部分はTrueにする
-		cap->Processed.push_back(false);//最新番号の次の番号部分はFalseとしておく
+		cap->cam.captureFrame(temp.data);
+		{
+			cv::AutoLock lock(mutex);
+			cap->Pictures[imgsavecnt] = temp.clone();
+		}
+		cap->Processed[imgsavecnt] = true;//今追加された写真の番号部分はTrueにする
+		outputimgcnt = imgsavecnt;
+		imgsavecnt++;
 	}
 }
 
-//thread内関数
-//指定したディレクトリの画像を入力する
-//void GetPicture(Capture *cap, bool *flg,char *filename) {
-//	cv::Mat img = cv::imread(filename,cv::IMREAD_GRAYSCALE);
-//	while (*flg)
-//	{
-//		cap->Pictures.push_back(img);
-//		cap->Processed[cap->Pictures.size() - 1] = true;//今追加された写真の番号部分はTrueにする
-//		cap->Processed.push_back(false);//最新番号の次の番号部分はFalseとしておく
-//	}
-//}
 
 //thread2内の関数
 //標準出力で現在の写真，時刻と高度
 void OutPutLogs(Capture *cap ,bool *flg) {
 	while (1)
 	{
-		if (cap->pic_cnt > 1) {
-			{
-				cv::AutoLock showlock(mutex);//出力のAutolock
-				cv::imshow("img", cap->Pictures[cap->pic_cnt - 2]);
-			}//アンロック
+		if (thrmask.data!=NULL&&outputimgcnt>3) {
+			cv::imshow("img", cap->Pictures[outputimgcnt - 3]);
 			cv::imshow("Diffs", thrmask);
 		}
 		int key = cv::waitKey(1);
@@ -500,136 +554,136 @@ int CalcHeights(Capture *cap) {
 	cap->Heights_world.clear();
 	cap->IdealPixs.clear();
 	cap->Worlds.clear();
-	cap->row_num.clear();
+	//cap->row_num.clear();
 	cap->barPoint.clear();
 	cap->barIdealPixs.clear();
 	cap->lambdas.clear();
+	shapedetection_flg = false;//排他制御，PicturesからCloneしたらアンロック
+	//画像配列群から次の処理カウンターの番号の画像をin_imgに格納する
 	{
-		cv::AutoLock measurelock(mutex);//排他制御，PicturesからCloneしたらアンロック
-		//画像配列群から次の処理カウンターの番号の画像をin_imgに格納する
+		cv::AutoLock lock(mutex);
 		cap->in_img = cap->Pictures[cap->pic_cnt].clone();
 	}
-	//輝度重心の計算
-	cv::threshold(cap->in_img, cap->out_img, 150.0, 255.0, cv::THRESH_BINARY);
-	cv::bitwise_and(cap->in_img, cap->out_img, cap->out_img);
-	//Barに映るレーザー輝度重心の計算
-	cv::threshold(cap->in_img(bar_roi), cap->bar_img, 50, 255.0, cv::THRESH_BINARY);
-	cv::bitwise_and(cap->in_img(bar_roi), cap->bar_img, cap->bar_img);
-	//Reference棒に映る点群の輝度重心をとる
-	for (int i = 0; i < cap->bar_img.rows; i++) {
-		moment = 0.0;
-		mass = 0.0;
-		for (int j = 0; j < cap->bar_img.cols; j++) {
-			mass += cap->bar_img.data[i*cap->bar_img.cols + j];
-			moment += j * cap->bar_img.data[i*cap->bar_img.cols + j];
+	cap->pic_cnt++;	
+	shapedetection_flg = true;//アンロック
+	if (cap->in_img.data != NULL) {
+		//輝度重心の計算
+		cv::threshold(cap->in_img, cap->out_img, 150.0, 255.0, cv::THRESH_BINARY);
+		cv::bitwise_and(cap->in_img, cap->out_img, cap->out_img);
+		//Barに映るレーザー輝度重心の計算
+		cv::threshold(cap->in_img(bar_roi), cap->bar_img, 70, 255.0, cv::THRESH_BINARY);
+		cv::bitwise_and(cap->in_img(bar_roi), cap->bar_img, cap->bar_img);
+		//Reference棒に映る点群の輝度重心をとる
+		for (int i = 0; i < cap->bar_img.rows; i++) {
+			moment = 0.0;
+			mass = 0.0;
+			for (int j = 0; j < cap->bar_img.cols; j++) {
+				mass += cap->bar_img.data[i*cap->bar_img.cols + j];
+				moment += j * cap->bar_img.data[i*cap->bar_img.cols + j];
+			}
+			if (mass <= 0) { cog = 0; }
+			else {
+				cog = moment / mass + bar_roi.x;
+			}
+			cap->barPoint.push_back(cog);
 		}
-		if (mass <= 0) { cog = 0; }
-		else {
-			cog = moment / mass+bar_roi.x;
+		//LINEの部分の輝度重心を獲得する
+		for (int i = LS_sta_row; i < LS_end_row; i++) {
+			moment = 0.0;
+			mass = 0.0;
+			for (int j = 0; j < cap->out_img.cols; j++) {
+				mass += cap->out_img.data[i*cap->out_img.cols + j];
+				moment += j * cap->out_img.data[i*cap->out_img.cols + j];
+			}
+			if (mass > 0) {
+				cog = moment / mass;
+			}
+			cap->CoGs.push_back(cog);
 		}
-		cap->barPoint.push_back(cog);
-	}
-	//LINEの部分の輝度重心を獲得する
-	for (int i = LS_sta_row; i < LS_end_row; i++) {
-		moment = 0.0;
-		mass = 0.0;
-		for (int j = 0; j < cap->out_img.cols; j++) {
-			mass += cap->out_img.data[i*cap->out_img.cols + j];
-			moment += j * cap->out_img.data[i*cap->out_img.cols + j];
-		}
-		/*if (mass <= 0) { cog = 0; }
-		else {
-			cog = moment / mass;
-			cap->row_num.push_back(i);
-		}*/
-		if (mass > 0) {
-			cog = moment / mass;
-			cap->row_num.push_back(i);
-		}
-		cap->CoGs.push_back(cog);
-	}
-	{
-		cv::AutoLock coglock(mutex2);//Xlaser_logの排他制御
-		if (cap->CoGs.size() == 0) {Xlaser_log.push_back(0);}
-		else { Xlaser_log.push_back((float)cap->CoGs[cap->CoGs.size() / 2]); }
-		Xlaser_log.erase(Xlaser_log.begin());
-	}//アンロック
-	cap->CoGs_Logs.push_back(cap->CoGs);//輝度重心のログ保存
-	//輝度重心⇒理想ピクセル座標に変換
-	vector<double> idpixs;
-	double u, v, w;//次のfor内でも使う
-	double ud, vd;
-	double totalcog = 0;
-	double cogcnt = 0;
-	double barcog;
-	//棒に映る輝点中心のX座標@pixel座標から，補完した点群を用いて平面パラメータを取得
-	for (int i = 0; i < cap->barPoint.size(); i++)
-	{
-		if (cap->barPoint[i] == 0) { continue; }
-		totalcog += cap->barPoint[i];
-		cogcnt++;
-	}
-	barcog = totalcog / cogcnt;
-	//もしレーザー平面が補間領内なら実行
-	if (cap->barX[0]<barcog && barcog<cap->barX[99]) {
-		cap->barXint = 0;
-		for (int i = 0; i < 100; i++)
 		{
-			if (cap->barX[i]<barcog&&cap->barX[i + 1]>barcog) {
-				cap->barXint = i;
-				break;
+			cv::AutoLock coglock(mutex2);//Xlaser_logの排他制御
+			if (cap->CoGs.size() == 0) { Xlaser_log.push_back(0); }
+			else { Xlaser_log.push_back((float)cap->CoGs[cap->CoGs.size() / 2]); }
+			Xlaser_log.erase(Xlaser_log.begin());
+		}//アンロック
+		cap->CoGs_Logs.push_back(cap->CoGs);//輝度重心のログ保存
+		//輝度重心⇒理想ピクセル座標に変換
+		vector<double> idpixs;
+		double u, v, w;//次のfor内でも使う
+		double ud, vd;
+		double totalcog = 0;
+		double cogcnt = 0;
+		double barcog;
+		//棒に映る輝点中心のX座標@pixel座標から，補完した点群を用いて平面パラメータを取得
+		for (int i = 0; i < cap->barPoint.size(); i++)
+		{
+			if (cap->barPoint[i] == 0) { continue; }
+			totalcog += cap->barPoint[i];
+			cogcnt++;
+		}
+		barcog = totalcog / cogcnt;
+		//もしレーザー平面が補間領内なら実行
+		if (cap->barX[0]<barcog && barcog<cap->barX[99]) {
+			cap->barXint = 0;
+			for (int i = 0; i < 100; i++)
+			{
+				if (cap->barX[i]<barcog&&cap->barX[i + 1]>barcog) {
+					cap->barXint = i;
+					break;
+				}
+			}
+			cap->laser_plane[0] = (cap->planeA[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeA[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
+			cap->laser_plane[1] = (cap->planeB[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeB[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
+			cap->laser_plane[2] = (cap->planeC[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeC[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
+
+			//地面にあたるレーザーの理想ピクセル座標の計算
+			for (int i = 0; i < cap->CoGs.size(); i++)
+			{
+				if (cap->CoGs[i] == 0) { continue; }
+				ud = cap->CoGs[i] - cap->distortion[0];
+				vd = (double)(i + LS_sta_row) - cap->distortion[1];
+				u = det * (ud - cap->stretch_mat[1] * vd);
+				v = det * (-cap->stretch_mat[2] * ud + cap->stretch_mat[0] * vd);
+				idpixs.push_back(u);
+				idpixs.push_back(v);
+				cap->IdealPixs.push_back(idpixs);
+				idpixs.clear();
+			}
+
+			//理想ピクセル座標⇒直線の式とレーザー平面の求解
+			double phi, lambda, h;
+			for (size_t i = 0; i < cap->IdealPixs.size(); i++)//0番目はReference棒への直線
+			{
+				u = cap->IdealPixs[i][0];
+				v = cap->IdealPixs[i][1];
+				phi = hypot(u, v);
+				w = cap->map_coefficient[0] + cap->map_coefficient[1] * pow(phi, 2)
+					+ cap->map_coefficient[2] * pow(phi, 3) + cap->map_coefficient[3] * pow(phi, 4);
+				lambda = 1 / (cap->laser_plane[0] * u + cap->laser_plane[1] * v + cap->laser_plane[2] * w);
+				cap->lambdas.push_back(lambda);
+				h = lambda * w;
+				cap->Heights_cam.push_back(h);
+			}
+
+			//カメラ座標系中心のWorld座標に変換
+			for (size_t i = 0; i < cap->IdealPixs.size(); i++)//0番目は棒に映る点
+			{
+				campnt = (cv::Mat_<double>(1, 3) << cap->lambdas[i] * cap->IdealPixs[i][0], cap->lambdas[i] * cap->IdealPixs[i][1], cap->Heights_cam[i]);
+				wldpnt = campnt * cap->Rots[0];
+				hw = wldpnt.clone().at<double>(0, 2);
+				cap->Worlds.push_back(wldpnt.clone());
+				cap->Heights_world.push_back(hw);
 			}
 		}
-		cap->laser_plane[0] = (cap->planeA[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeA[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
-		cap->laser_plane[1] = (cap->planeB[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeB[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
-		cap->laser_plane[2] = (cap->planeC[cap->barXint] * (cap->barX[cap->barXint + 1] - barcog) + cap->planeC[cap->barXint + 1] * (barcog - cap->barX[cap->barXint])) / (cap->barX[cap->barXint + 1] - cap->barX[cap->barXint]);
 
-		//地面にあたるレーザーの理想ピクセル座標の計算
-		for (int i = 0; i < cap->CoGs.size(); i++)
-		{
-			if (cap->CoGs[i] == 0) { continue; }
-			ud = cap->CoGs[i] - cap->distortion[0];
-			vd = (double)(i + LS_sta_row) - cap->distortion[1];
-			u = det * (ud - cap->stretch_mat[1] * vd);
-			v = det * (-cap->stretch_mat[2] * ud + cap->stretch_mat[0] * vd);
-			idpixs.push_back(u);
-			idpixs.push_back(v);
-			cap->IdealPixs.push_back(idpixs);
-			idpixs.clear();
-		}
+		cap->Worlds_Logs.push_back(cap->Worlds);
+		//cap->Row_num_Logs.push_back(cap->row_num);
 
-		//理想ピクセル座標⇒直線の式とレーザー平面の求解
-		double phi, lambda, h;
-		for (size_t i = 0; i < cap->IdealPixs.size(); i++)//0番目はReference棒への直線
-		{
-			u = cap->IdealPixs[i][0];
-			v = cap->IdealPixs[i][1];
-			phi = hypot(u, v);
-			w = cap->map_coefficient[0] + cap->map_coefficient[1] * pow(phi, 2)
-				+ cap->map_coefficient[2] * pow(phi, 3) + cap->map_coefficient[3] * pow(phi, 4);
-			lambda = 1 / (cap->laser_plane[0] * u + cap->laser_plane[1] * v + cap->laser_plane[2] * w);
-			cap->lambdas.push_back(lambda);
-			h = lambda * w;
-			cap->Heights_cam.push_back(h);
-		}
+		////処理カウンターと処理判別の更新
+		//cap->pic_cnt++;
 
-		//カメラ座標系中心のWorld座標に変換
-		for (size_t i = 0; i < cap->IdealPixs.size(); i++)//0番目は棒に映る点
-		{
-			campnt = (cv::Mat_<double>(1, 3) << cap->lambdas[i] * cap->IdealPixs[i][0], cap->lambdas[i] * cap->IdealPixs[i][1], cap->Heights_cam[i]);
-			wldpnt = campnt * cap->Rots[0];
-			hw = wldpnt.clone().at<double>(0, 2);
-			cap->Worlds.push_back(wldpnt.clone());
-			cap->Heights_world.push_back(hw);
-		}
 	}
-
-	cap->Worlds_Logs.push_back(cap->Worlds);
-	cap->Row_num_Logs.push_back(cap->row_num);
-
-	//処理カウンターと処理判別の更新
-	cap->pic_cnt++;
-
+	
 	return 0;
 }
 
@@ -873,75 +927,31 @@ void computeMatrices() {
 	lastTime = currentTime;//時間更新
 }
 
-//正規分布値を計算する関数
-double NormDist(double x, double a, double sig, double mean) {
-	return a / sqrt((2 * M_PI*sig*sig))*exp(-(x - mean)*(x - mean) / 2 / sig / sig);
-}
 
-//Scanする場所を評価関数で求める
-void ScapPosEvaluation(Capture *cap, bool *flg) {
-	unsigned int evalcnt = 0;
-	while (*flg)
-	{
-		if (cap->Worlds_Logs[cap->Worlds_Logs.size() - 1].size()>0&&cap->pic_cnt>evalcnt)
-		{
-			double xnow = cap->Worlds_Logs[cap->Worlds_Logs.size() - 1][0].at<double>(0, 0);
-			double Emax = 0;
-			int argEmax;
-			double temp = NormDist(-150, 0.2, 50, -150);
-			vector<double> Es;
-			//printf("%lf", temp);
-			QueryPerformanceCounter(&logend);
-			double evaltime = (double)(logend.QuadPart - start.QuadPart) / freq.QuadPart;
-			for (int i = -300; i < 300; i++)
-			{
-				if ((int)xnow == i) {
-					E[i + 300] = 0;
-					t[i + 300] = evaltime;
-				}
-				else {
-					E[i + 300] = NormDist((double)i, 0.2, 50, -150) + NormDist((double)i, 0.2, 50, 150) +
-						NormDist((double)i, 0.5, 10, xnow) + t_alpha * (evaltime - t[i + 300]);
-				}
-				if (Emax<E[i + 300])//argmaxEが更新されたら
-				{
-					Emax = E[i + 300];
-					argEmax = i;
-				}
-				Es.push_back(E[i + 300]);
-			}
-			EvalTimeLogs.push_back(evaltime);
-			E_Logs.push_back(Es);
-			argEmaxLogs.push_back(argEmax);
-			evalcnt++;
-		}
-	}
-}
 
 //連続difframe枚分のフレーム画像の差分画像から形状変化を検出
 void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 	while (*flg&&!shapechange)
 	{
-		if (cap->pic_cnt>difframe)//difframe分だけ処理カウンタが進んだ
-		{
-			cv::AutoLock difframelock(mutex);//排他処理
-			oldimg = cap->Pictures[cap->pic_cnt - difframe].clone();
-			newimg = cap->Pictures[cap->pic_cnt - 1].clone();
-			
-			
-		}//アンロック
-		if (oldimg.data == NULL || newimg.data == NULL || cap->pic_cnt <= pic_cnt_old) { continue; }
 		
-		pic_cnt_old = cap->pic_cnt;
+		if(shapedetection_flg){
+			detect_cnt = cap->pic_cnt;
+			if (detect_cnt > difframe) {//difframe分だけ処理カウンタが進んだ
+				oldimg = cap->Pictures[detect_cnt - difframe].clone();
+				newimg = cap->Pictures[detect_cnt - 1].clone();
+			}
+		}		
+		if (oldimg.data == NULL || newimg.data == NULL || detect_cnt <= detect_cnt_old) { continue; }
+		detect_cnt_old = detect_cnt;
 		//差分画像計算
 		diff = abs(newimg - oldimg);
 
 		//形状変化部分を差分画像から検出
-		cv::threshold(oldimg(roi), laserthr, 60, 255, cv::THRESH_BINARY);
-		cv::threshold(newimg(roi), laserthr2, 60, 255, cv::THRESH_BINARY);//レーザーが光っているところはThresholdかける
+		cv::threshold(oldimg, laserthr, 60, 255, cv::THRESH_BINARY);
+		cv::threshold(newimg, laserthr2, 60, 255, cv::THRESH_BINARY);//レーザーが光っているところはThresholdかける
 		cv::bitwise_or(laserthr, laserthr2, laserthr);
 		cv::GaussianBlur(laserthr, laserthr, cv::Size(51, 17), 0);
-		cv::threshold(laserthr, laserthr, 0, 255, cv::THRESH_BINARY);
+		cv::threshold(laserthr(roi), laserthr, 0, 255, cv::THRESH_BINARY);
 		cv::bitwise_not(laserthr, laserthr);
 		meanval = (int)mean(diff)[0];//差分画像の平均画素値計算
 		cv::bitwise_and(diff(roi), laserthr, thrmask);//レーザーが映ったところは消去
@@ -951,7 +961,7 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 
 		//形状変化検出画像の部分から0次モーメント(Pixel数)計算
 		M = cv::moments(thrmask);
-		if ((int)M.m00/255 > detect_cnt_thr)//閾値以上の点数が形状変化点だったら
+		if ((int)M.m00/255 > detect_cnt_thr && !(M.nu02>100 * M.nu20))//閾値以上の点数が形状変化点だったら
 		{
 			detection_num++;
 			if (detection_num > max_detection_num) {
@@ -974,6 +984,7 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 				unsigned char frameno = (unsigned char)mindiffno;
 				mirror.Send("l");//フレーム番号送信前のフラグ
 				mirror.Send_CHAR(frameno);//フレーム番号送信
+				numchange_flg = true;//ログ出力のレーザー本数の変更フラグ
 				shapechange = 1;//形状変化検出フラグ更新⇒終了
 			}
 		}
@@ -981,102 +992,34 @@ void ShapeChangeDetectionMultiFrame(Capture *cap,bool *flg) {
 			detection_num = 0;
 		}
 		//ログ保存
-		FrameNos.push_back(pic_cnt_old - 1);
+		FrameNos.push_back(detect_cnt_old - 1);
 		Detect_pixcnt_log.push_back((int)M.m00 / 255);
 		Detect_num_log.push_back(detection_num);
 	}
 }
 
-//連続2枚分のフレーム画像の差分画像から形状変化を検出
-void ShapeChangeDetection(Capture *cap, bool *flg) {
-	int difframe = 2;
-	while (*flg)
-	{
-		if (cap->pic_cnt>difframe&&cap->Processed[cap->pic_cnt]) {//difframe分だけ処理カウンタが進んだら
-			oldimg = cap->Pictures[cap->pic_cnt - difframe];
-			newimg = cap->Pictures[cap->pic_cnt-1];
-			//差分画像計算
-			diff = abs(newimg - oldimg);
-			int meanval = (int)mean(diff)[0];
-			cv::threshold(diff, thrmask, 15.0 + meanval, 255.0, cv::THRESH_BINARY);
-			//cv::bitwise_and(diff, thrdiff, thrmask);
-			Diffs.push_back(diff.clone());
-			int cntzero = cv::countNonZero(diff);
-		}
-	}
-}
 
-
-//ミラーの画角制御
-void MirrorControl(Capture *cap,bool *flg) {
-	while (*flg)
-	{
-		//画像が1枚更新されたときにSwitch文1回行う
-		if (cap->Processed[cap->pic_cnt]&&cap->pic_cnt>control_cnt)
-		{
-			switch (mode)
-			{
-			case 0://通常通りScan
-				Vtarget = 1.65;
-				delv = 3.3 / max_laser_num;
-				if (mirrorV>3.3 - delv * 0.5) { mirrordir = -1; }
-				else if (mirrorV<0 + delv * 0.5) { mirrordir = 1; }
-				dV += (float)mirrordir*delv;
-				mirrorV = dV + Vtarget;
-				break;
-
-			case 1://形状変化検知後に移動
-				dV = 0;//dVをリセット
-				mirrorV = Vtarget;//Vtargetは別Threadで更新される
-				break;
-
-			case 2://形状変化地帯の計測
-				//Vtargetは形状変化検知後の移動で更新されたものを使う
-				Vtarget = 1.0;
-				delv = 3.3 / max_angle * part_angle / part_laser_num;
-				if (mirrorV>3.3 - delv * 0.5 || mirrorV>Vtarget + delv * (part_laser_num / 2.0 - 0.5)) { mirrordir = -1; }
-				else if (mirrorV<0 + delv * 0.5 || mirrorV<Vtarget - delv * (part_laser_num / 2.0 - 0.5)) { mirrordir = 1; }
-				dV += (float)mirrordir*delv;
-				mirrorV = dV + Vtarget;
-				break;
-
-			default://通常Scanにする
-				Vtarget = 1.65;
-				delv = 3.3 / max_laser_num;
-				if (mirrorV>3.3 - delv * 0.5) { mirrordir = -1; }
-				else if (mirrorV<0 + delv * 0.5) { mirrordir = 1; }
-				dV += (float)mirrordir*delv;
-				mirrorV = dV + Vtarget;
-				break;
-			}
-			control_cnt++;
-			mirV_log.push_back(mirrorV);
-			//mirrorVをMBEDに送信
-			snprintf(buf_mirror, 7, "%.5f", mirrorV);//floatの電圧値を7桁のchar文字列に変換
-			temp_log = buf_mirror;
-			sendlog.push_back(temp_log);
-			mirror.Send("o");//同期用文字の送信
-			mirror.Send(buf_mirror);//そこから7文字分読み取らせる
-		}
-	}
-	mirror.Send("q");
-	mirror.~RS232c();
-}
-
-//ミラーにコマンドを送る
-void SendMirror(Capture *cap, bool *flg) {
-	while (*flg)
-	{
-		////画像が1枚更新されたときにSwitch文1回行う
-		//if (cap->Processed[cap->pic_cnt] && cap->pic_cnt>control_cnt)
-		//{
-		//	control_cnt++;
-		//	//信号をMBEDに送信
-		//	mirror.Send("o");//"o"が送られると1フレーム分更新する
-		//}
-		//信号をMBEDに送信
-		mirror.Send("o");//"o"が送られると1フレーム分更新する
-	}
-	mirror.Send("q");
-	mirror.~RS232c();
+//単軸ロボットのポイント指定移動
+void AxisToPoint(RS232c *axis, int *pointnum) {
+	char command[256] = { '\0' };
+	char buf[256];
+	int rob_height;
+	//axis->Read_CRLF(buf, 256);
+	//printf(buf);//RUN
+	sprintf(command, "@START%d.1\r\n", *pointnum);
+	axis->Send(command);
+	axis->Read_CRLF(buf, 256);
+	//printf(buf);//RUN
+	Sleep(5000);//この時間以内に動き切る
+	axis->Read_CRLF(buf, 256);
+	//printf(buf);//END
+	//Sleep(1000);
+	//axis.Send("@?D0.1\r\n");
+	//axis.Read_CRLF(buf, 256);
+	//printf(buf);//D0.1=~~
+	//			/*axis.Send("@?D0.1\r\n");
+	//			axis.Read_CRLF(buf, 256);
+	//			printf(buf);*/
+	//sscanf(buf, "D0.1=%d\r\n", &rob_height);
+	//cap.height = cap.rob_ini_height + (float)rob_height * 0.01;
 }
