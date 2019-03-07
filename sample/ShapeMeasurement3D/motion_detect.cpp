@@ -55,7 +55,7 @@ void ShapeChangeDetectionMultiFrame(Capture *cap, bool *flg) {
 
 
 
-																				  //形状変化検出画像の部分から0次モーメント(Pixel数)計算
+		//形状変化検出画像の部分から0次モーメント(Pixel数)計算
 		M = cv::moments(thrmask);
 		if ((int)M.m00 / 255 > detect_cnt_thr && !(M.nu02>100 * M.nu20))//閾値以上の点数が形状変化点だったら
 		{

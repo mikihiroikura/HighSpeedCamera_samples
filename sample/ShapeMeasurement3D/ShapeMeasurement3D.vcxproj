@@ -125,12 +125,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="graphics.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="motion_detect.cpp" />
     <ClCompile Include="RS232c.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="main.h" />
+    <ClInclude Include="graphics.h" />
     <ClInclude Include="motion_detect.h" />
     <ClInclude Include="parameters.h" />
     <ClInclude Include="RS232c.h" />
