@@ -118,20 +118,37 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
+      <AdditionalIncludeDirectories>C:\Users\Mikihiro Ikura\Documents\GitHub\HighSpeedCamera\sample\ShapeMeasurement3D;C:\Users\Mikihiro Ikura\Documents\GitHub\HighSpeedCamera\sample\ShapeMeasurement3D\include;C:\Users\Mikihiro Ikura\Documents\GitHub\HighSpeedCamera\sample\ShapeMeasurement3D\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
+      <IgnoreSpecificDefaultLibraries>
+      </IgnoreSpecificDefaultLibraries>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="graphics.cpp" />
+    <ClCompile Include="imgui\imgui.cpp" />
+    <ClCompile Include="imgui\imgui_demo.cpp" />
+    <ClCompile Include="imgui\imgui_draw.cpp" />
+    <ClCompile Include="imgui\imgui_widgets.cpp" />
+    <ClCompile Include="imgui_impl_glfw.cpp" />
+    <ClCompile Include="imgui_impl_opengl3.cpp" />
+    <ClCompile Include="include\GL\gl3w.c" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="motion_detect.cpp" />
     <ClCompile Include="RS232c.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="graphics.h" />
+    <ClInclude Include="imgui\imconfig.h" />
+    <ClInclude Include="imgui\imgui.h" />
+    <ClInclude Include="imgui\imgui_internal.h" />
+    <ClInclude Include="imgui_impl_glfw.h" />
+    <ClInclude Include="imgui_impl_opengl3.h" />
+    <ClInclude Include="include\GL\gl3w.h" />
+    <ClInclude Include="include\GL\glcorearb.h" />
     <ClInclude Include="motion_detect.h" />
     <ClInclude Include="parameters.h" />
     <ClInclude Include="RS232c.h" />

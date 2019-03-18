@@ -1,9 +1,18 @@
-#include "graphics.h"
+#define IMGUI_IMPL_OPENGL_LOADER_GLEW
+
 #include <vector>
 #include <opencv2/opencv.hpp>
+#include "imgui.h"
+#include "imgui_impl_glfw.h"
+#include "imgui_impl_opengl3.h"
+#pragma comment(lib, "glew32.lib")
+#include <GL/glew.h>
+#include "GLFW/glfw3.h"
 #define _USE_MATH_DEFINES
 #include <math.h>
 #define GLFW_NO_GLU
+
+#include "graphics.h"
 
 using namespace std;
 
@@ -165,6 +174,29 @@ int writepointcloud(Capture *cap, bool *flg) {
 	//保存用Matファイル
 	cv::Mat gl_img(768, 1024, CV_8UC3);
 
+	//OpenGL loader
+#if defined(IMGUI_IMPL_OPENGL_LOADER_GL3W)
+	bool err = gl3wInit() != 0;
+#elif defined(IMGUI_IMPL_OPENGL_LOADER_GLEW)
+	bool err = glewInit() != GLEW_OK;
+#elif defined(IMGUI_IMPL_OPENGL_LOADER_GLAD)
+	bool err = gladLoadGL() == 0;
+#else
+	bool err = false; // If you use IMGUI_IMPL_OPENGL_LOADER_CUSTOM, your loader is likely to requires some form of initialization.
+#endif
+	if (err)
+	{
+		fprintf(stderr, "Failed to initialize OpenGL loader!\n");
+		return 1;
+	}
+
+	//Imguiの初期化
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+	
+	ImGui_ImplGlfw_InitForOpenGL(window, true);
+	ImGui_ImplOpenGL3_Init();
 
 	while (glfwWindowShouldClose(window) == GL_FALSE && *flg)
 	{
@@ -198,6 +230,36 @@ int writepointcloud(Capture *cap, bool *flg) {
 		glDrawArrays(GL_POINTS, 0, max_num*logsize);
 		glBindVertexArray(0);
 
+		//Imgui開始
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		//Imguiのウインドウ表示
+		{
+			ImGui::Begin("Test Window");
+
+			ImGui::Text("Hello, world %d", 123);
+
+			if (ImGui::Button("OK")) {
+				printf("Button\n");
+			}
+
+			static char buf[256] = "aaa";
+			if (ImGui::InputText("string", buf, 256)) {
+				printf("InputText\n");
+			}
+
+			static float f = 0.0f;
+			if (ImGui::SliderFloat("float", &f, 0.0f, 1.0f)) {
+				printf("SliderFloat\n");
+			}
+			ImGui::End();
+		}
+		//Imguiレンダリング
+		ImGui::ShowTestWindow();
+		ImGui::Render();
+		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
 		//フロントバッファとバックバッファの入れ変え
 		glfwSwapBuffers(window);
@@ -212,6 +274,11 @@ int writepointcloud(Capture *cap, bool *flg) {
 	}
 	glDeleteVertexArrays(1, &vao);
 	glDeleteBuffers(1, &vbo);
+
+	//Imguiの終了
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
 
 	glfwTerminate();
 }
