@@ -21,7 +21,7 @@
 //  Only override if your GL version doesn't handle this GLSL version. See GLSL version table at the top of imgui_impl_opengl3.cpp.
 
 #pragma once
-
+#define IMGUI_IMPL_OPENGL_LOADER_GLEW	//OpenGL loader‚ÍGLEW‚ÉŽw’è
 // Specific OpenGL versions
 //#define IMGUI_IMPL_OPENGL_ES2     // Auto-detected on Emscripten
 //#define IMGUI_IMPL_OPENGL_ES3     // Auto-detected on iOS/Android

@@ -1,11 +1,8 @@
-#define IMGUI_IMPL_OPENGL_LOADER_GLEW
-
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#pragma comment(lib, "glew32.lib")
 #include <GL/glew.h>
 #include "GLFW/glfw3.h"
 #define _USE_MATH_DEFINES
@@ -39,14 +36,16 @@ glm::mat4 Projection;
 GLuint Matrix;
 glm::vec3 campos;//カメラ位置座標ベクトル
 vector<cv::Mat> gl_img_Logs;//OpenGL出力図の保存Vector
-//View行列再計算時のパラメータ
+//ImguiでのView行列再計算時のパラメータ
 float h_angle = 0;
 float v_angle = M_PI / 6.0f;
 float fov = 45.0f;
-float speed = 3.0f;
-float mousespeed = 0.005f;
 float H_robot = 470;
 const float H_camera = 600;
+float diffX = 0;
+float diffY = 0;
+float diffZ = 0;
+double currentTime =0.0;
 
 /*
 ** シェーダーのソースプログラムをメモリに読み込む
@@ -230,34 +229,44 @@ int writepointcloud(Capture *cap, bool *flg) {
 		glDrawArrays(GL_POINTS, 0, max_num*logsize);
 		glBindVertexArray(0);
 
+		glfwPollEvents();//マウスの動き保存
+
 		//Imgui開始
 		ImGui_ImplOpenGL3_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
 		//Imguiのウインドウ表示
+		ImGui::SetNextWindowSize(ImVec2(200, 300));
+		ImGui::SetNextWindowPos(ImVec2(0, 0));
+		ImGui::Begin("View controller");
 		{
-			ImGui::Begin("Test Window");
+			ImGui::Text("Time: %.3f [s]", (float)currentTime);
 
-			ImGui::Text("Hello, world %d", 123);
+			ImGui::Spacing();
+			ImGui::Text("View direction angle");
+			ImGui::SliderFloat("v angle", &v_angle, -3.14f, 3.14f, "%.3f");
+			ImGui::SliderFloat("h angle", &h_angle, -3.14f, 3.14f, "%.3f");
+			
+			ImGui::Spacing();
+			ImGui::Text("Camera position");
+			ImGui::SliderFloat("X", &diffX, -100.0f, 100.0f, "%.3f");
+			ImGui::SliderFloat("Y", &diffY, -100.0f, 100.0f, "%.3f");
+			ImGui::SliderFloat("Z", &diffZ, -100.0f, 100.0f, "%.3f");
 
-			if (ImGui::Button("OK")) {
-				printf("Button\n");
+			if (ImGui::Button("Reset")){
+				v_angle = M_PI / 6.0f;
+				h_angle = 0;
+				diffX = 0;
+				diffY = 0;
+				diffZ = 0;
 			}
 
-			static char buf[256] = "aaa";
-			if (ImGui::InputText("string", buf, 256)) {
-				printf("InputText\n");
-			}
-
-			static float f = 0.0f;
-			if (ImGui::SliderFloat("float", &f, 0.0f, 1.0f)) {
-				printf("SliderFloat\n");
-			}
-			ImGui::End();
+			if (ImGui::Button("Quit")) { break;}
 		}
+		ImGui::End();
+
 		//Imguiレンダリング
-		ImGui::ShowTestWindow();
 		ImGui::Render();
 		ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -285,21 +294,13 @@ int writepointcloud(Capture *cap, bool *flg) {
 
 void computeMatrices() {
 	static double lastTime = glfwGetTime();//はじめだけ
-	double currentTime = glfwGetTime();//毎回
+	currentTime = glfwGetTime();//毎回
 	float deltaT = float(currentTime - lastTime);
 
-	//Mouse位置から見ている方向を変更
-	double xp, yp;
-	glfwGetCursorPos(window, &xp, &yp);
-	//glfwSetCursorPos(window, 1024/2, 768/2);//マウス位置リセット
-	//printf("xp: %f, yp: %f \n",xp,yp);
-
 	//カメラ位置ベクトル更新
-	campos = glm::vec3(0, -400, H_robot - H_camera);
+	campos = glm::vec3(0+diffX, -400+diffY, H_robot - H_camera+diffZ);
 
 	//方向ベクトル更新
-	/*h_angle += mousespeed * float(1024 / 2 - xp);
-	v_angle += mousespeed * float(768 / 2 - yp);*/
 	glm::vec3 direction(
 		cos(v_angle)*sin(h_angle),
 		sin(v_angle),
@@ -313,25 +314,6 @@ void computeMatrices() {
 	);
 	//上ベクトル
 	glm::vec3 up = glm::cross(right, direction);
-
-
-	//矢印キー分だけカメラ位置変更
-	// Move forward
-	if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
-		campos += direction * deltaT * speed;
-	}
-	// Move backward
-	if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-		campos -= direction * deltaT * speed;
-	}
-	// Strafe right
-	if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-		campos += right * deltaT * speed;
-	}
-	// Strafe left
-	if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
-		campos -= right * deltaT * speed;
-	}
 
 	//射影行列の更新
 	Projection = glm::perspective(glm::radians(fov), 4.0f / 3.0f, 0.1f, 1000.0f);

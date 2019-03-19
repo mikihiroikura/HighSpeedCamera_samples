@@ -15,21 +15,13 @@
 #include <math.h>
 #define GLFW_NO_GLU
 
-#pragma comment(lib, "glew32.lib")
-#include <GL/glew.h>
-#include "GLFW/glfw3.h"
-#include <glm.hpp>
-#define GLM_ENABLE_EXPERIMENTAL
-#include <gtc/matrix_transform.hpp> 
-#include <gtx/transform.hpp>
-
-
 #ifdef _DEBUG
 #define CAMERA_EXT "d.lib"
 #else
 #define CAMERA_EXT ".lib"
 #endif
 
+//opencv_world341(d).lib‚Ì’Ç‰Á
 #define STR_EXP(__A) #__A
 #define STR(__A) STR_EXP(__A)
 #define CV_VER STR(CV_VERSION_MAJOR) STR(CV_VERSION_MINOR) STR(CV_VERSION_REVISION)
@@ -45,8 +37,6 @@
 #include "motion_detect.h"
 #include "graphics.h"
 #include "parameters.h"
-//#include "main.h"
-
 
 
 //DEFINEŒQ
@@ -346,7 +336,7 @@ int main(int argc, char *argv[]) {
 	//if (!writer.isOpened()) { return -1; }
 	for (int i = 0; i < imgsavecnt; i++) {//¶‰æ‘œ•Û‘¶
 		//writer << cap.Pictures[i].clone();
-		sprintf(picturename, "%s%d.png", picsubname, i);//jpg•s‰Â‹tˆ³kCpng‰Â‹tˆ³k
+		sprintf(picturename, "%s%d.png", picsubname, i);//png‰Â‹tˆ³k
 		cv::imwrite(picturename, cap.Pictures[i]);
 	}
 	printf("Imgs finish!\n");

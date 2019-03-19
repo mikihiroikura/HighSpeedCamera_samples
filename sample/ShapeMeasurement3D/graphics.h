@@ -2,7 +2,7 @@
 #ifndef GRAPHICS_H
 #define GRAPHICS_H
 
-
+#include <GL/glew.h>
 #include <glm.hpp>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <gtc/matrix_transform.hpp> 
